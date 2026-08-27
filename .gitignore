@@ -1,0 +1,28 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Build artifacts
+build/
+*.app
+DerivedData/
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store
+
+# Secrets — never commit
+*.env
+secrets.plist
+
+# Local-only workspace material
+.agents/
+.codex/
+.claude/
+scratch/
+CLAUDE.md
+docs/superpowers/
