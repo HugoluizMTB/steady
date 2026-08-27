@@ -1,84 +1,107 @@
-<h1 align="center">Steady</h1>
+# Steady
 
-<p align="center">
-  A calm, native macOS <b>menu-bar command center</b> for developers.<br>
-  Liquid Glass · dark-first · your local Claude Code &amp; Codex sessions, unified.
-</p>
+Steady is a native macOS command center for the developer workflow. It combines
+a compact Liquid Glass-inspired menu-bar panel with a configurable workspace for
+the tools you use while building software.
 
----
+The app is written in SwiftUI and distributed as a Swift Package executable.
 
-> **Status:** Phase 1 (foundation) is built and runs. See the
-> [roadmap](docs/specs/ROADMAP.md).
+## What it includes
 
-## Why
+### Menu-bar tools
 
-Raycast is *pull* — you invoke it. Steady is *calm push* — it shows you the short
-list of what actually needs you, and lets you **resolve and advance**. Two
-surfaces, one menu-bar app:
+- **Pull Requests** — lists open GitHub pull requests, CI state, review state,
+  owner filters, favourites, and stacked pull-request relationships.
+- **Claude Usage** — shows Claude Code session and weekly usage, refreshes
+  automatically, and can notify when a configured threshold is reached.
+- **Ports** — watches listening development ports, shows network activity, and
+  provides quick actions to open a local service or stop its process.
+- **Colors** — samples any pixel on screen, copies its hex value, and keeps a
+  local colour history.
+- **Clipboard** — keeps a local clipboard history and restores an item with one
+  click.
+- **Code Snap** — opens a dedicated editor for turning a code snippet into a
+  shareable image.
 
-- **Status island** — glanceable dev tools: network meter, open PRs, listening
-  ports, color picker, and more.
-- **Focus queue** — "only what needs you now": Claude Code / Codex sessions,
-  Slack, email, Linear — a finite queue you clear with two actions.
+### Workspace
 
-The moat: **local AI coding-agent sessions as first-class citizens** — read,
-resume, and drive Claude Code and Codex without leaving the menu bar. Nobody else
-does this in a calm, native form.
+The main window supports one, two, three, or four panes. Each pane can switch
+between Claude sessions, Codex sessions, Linear, Slack, and the available work
+contexts without leaving Steady.
 
-## Stack
+## Requirements
 
-Native **SwiftUI**, macOS 26 (Liquid Glass), Swift 6.2, SwiftPM. Modular by
-design — every feature is a `StatusTool` plugin.
+- macOS 26 or later
+- Xcode 26 or later, including the Command Line Tools
+- Swift 6.2
 
+Some tools use local developer utilities when they are available:
+
+- [GitHub CLI](https://cli.github.com/) authenticated with `gh auth login` for
+  pull requests.
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for usage data.
+- macOS system tools such as `lsof` for port discovery.
+
+The remaining tools work independently of those integrations.
+
+## Run locally
+
+```bash
+git clone https://github.com/HugoluizMTB/steady.git
+cd steady
+
+swift build
+./scripts/bundle.sh debug
+open build/Steady.app
 ```
-SteadyKit   core: StatusTool protocol, ToolRegistry, models   (no UI)
-SteadyUI    design system: Liquid Glass components, dark theme
-Steady      app shell: MenuBarExtra + first-party tools
+
+The bundled app runs as a menu-bar application. Select the Steady icon in the
+menu bar to open the tool panel, or use the window launched above for the
+workspace.
+
+For an optimized build:
+
+```bash
+./scripts/bundle.sh release
+open build/Steady.app
 ```
 
-## Run it
+## Project layout
 
-Requires macOS 26+ and Xcode 26+.
+```text
+Sources/
+├── Steady/          App shell, workspace, menu-bar panel, Code Snap
+├── PRMenubar/       GitHub pull-request integration
+├── ClaudeUsage/     Claude Code usage integration
+├── PortPilotKit/     Port and network monitoring
+├── ColorPickerKit/  Screen colour picker
+└── ClipboardKit/     Clipboard history
+```
+
+`Package.swift` defines the executable and all local modules. SwiftTerm is the
+only external Swift Package dependency.
+
+## Privacy and credentials
+
+Steady does not include credentials in source control. OAuth tokens, Slack
+client details, and Linear credentials are stored in the macOS Keychain on the
+machine where you connect them. Preferences and local histories remain on that
+machine as well.
+
+Before contributing, keep `.env` files, private keys, generated app bundles,
+and local screenshots out of Git. The repository's `.gitignore` already covers
+those local-only files.
+
+## Development
 
 ```bash
 swift build
 ./scripts/bundle.sh debug
-open build/Steady.app        # look in the menu bar (hexagon icon)
 ```
 
-## Write a tool
-
-Everything the user sees is a `StatusTool`. Conform a type, register it — the
-shell renders the rest.
-
-```swift
-@MainActor @Observable
-final class MyTool: StatusTool {
-    let id = "dev.my-tool"
-    let title = "My Tool"
-    let systemImage = "sparkles"
-    let placement: ToolPlacement = .island
-    func glance() -> AnyView { AnyView(GlassCard { Text("hello") }) }
-}
-// then in SteadyApp.bootstrap(): registry.register(MyTool())
-```
-
-See `Sources/Steady/Tools/NetworkMeterTool.swift` for a complete live example.
-
-## Roadmap
-
-| Phase | What |
-|-------|------|
-| 1 ✅ | Foundation: shell, design system, plugin registry, network meter |
-| 2 | Status island + dev tools (GitHub PRs, Port Pilot, Color Picker) |
-| 3 | Focus queue: Snooze/Resolve, resolve-and-advance, ⌘K |
-| 4 | Claude Code + Codex sessions |
-| 5 | Slack, email, Linear (OAuth / MCP) |
-| 6 | Notarized distribution + community tool SDK |
-
-Full specs in [`docs/specs/`](docs/specs/).
+Run `swift build` before opening a pull request. The project targets the current
+macOS 26 SwiftUI APIs, including Liquid Glass.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Contributions welcome; see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+[MIT](LICENSE)
