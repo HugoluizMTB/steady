@@ -25,9 +25,22 @@ The app is written in SwiftUI and distributed as a Swift Package executable.
 
 ### Workspace
 
-The main window supports one, two, three, or four panes. Each pane can switch
-between Claude sessions, Codex sessions, Linear, Slack, and the available work
-contexts without leaving Steady.
+The main window supports one, two, three, or four panes. Live panes are
+available for Claude Code sessions, Codex sessions, Linear, and Slack, so you
+can keep an agent, issues, and messages in the same workspace.
+
+## Integrations
+
+| Integration | What Steady does today | Setup |
+| --- | --- | --- |
+| **GitHub** | Reads your open pull requests through `gh`, including CI and review state, owner filters, favourites, and stacked PRs. | Run `gh auth login`. |
+| **Claude Code** | Shows session/weekly usage, tracks live Claude processes, reads local session metadata, and resumes a selected session in Terminal. | Install and sign in to the `claude` CLI. |
+| **Codex** | Detects live Codex processes and lets you resume a selected session in Terminal with `codex resume`. | Install and sign in to the `codex` CLI. |
+| **Linear** | Registers a local OAuth client, uses PKCE to sign in, fetches issues assigned to you through Linear MCP, groups them by state, and opens an issue in the browser. | Select **Sign in with Linear** in the workspace. No client secret is required. |
+| **Slack** | Connects to the official Slack MCP, stores the OAuth result locally, and discovers the tools available to the connected workspace. | Create a Slack app once, then enter its Client ID and Client Secret in Steady. |
+
+Slack currently establishes and verifies the MCP connection; a full channel and
+conversation UI is not exposed in the workspace yet.
 
 ## Requirements
 
@@ -42,7 +55,8 @@ Some tools use local developer utilities when they are available:
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for usage data.
 - macOS system tools such as `lsof` for port discovery.
 
-The remaining tools work independently of those integrations.
+Linear and Slack authorise in the browser. Steady stores their tokens and Slack
+client details in the macOS Keychain, not in the repository.
 
 ## Run locally
 
