@@ -27,13 +27,9 @@ struct SessionTerminal: NSViewRepresentable {
 
         let agent: String
         if session.kind == .claude {
-            let config: String
-            if session.filePath.contains("/.claude-empresa/") { config = "$HOME/.claude-empresa" }
-            else if session.filePath.contains("/.claude-pessoal/") { config = "$HOME/.claude-pessoal" }
-            else { config = "$HOME/.claude" }
-            agent = "CLAUDE_CONFIG_DIR=\(config) claude --resume \(session.id)"
+            agent = "CLAUDE_CONFIG_DIR=\(quote(session.profile.root)) claude --resume \(quote(session.id))"
         } else {
-            agent = "codex resume \(session.id)"
+            agent = "CODEX_HOME=\(quote(session.profile.root)) codex resume \(quote(session.id))"
         }
 
         let inner = "cd \(quote(cwd)); \(agent)"
