@@ -12,6 +12,12 @@ final class GitHubStore {
     private(set) var myPRs: [GHPullRequest] = []
     private(set) var reviewPRs: [GHPullRequest] = []
     private(set) var repos: [GHRepo] = []
+    private(set) var contributions: GHContributions?
+    private(set) var issuesCount = 0
+    private(set) var dependabotCount = 0
+    private(set) var detailPR: GHPullRequest?
+    private(set) var detailBody = ""
+    private(set) var loadingDetail = false
     private(set) var loading = false
 
     var unreadCount: Int { notifications.filter { $0.unread }.count }
@@ -36,12 +42,18 @@ final class GitHubStore {
             async let myResult = Task.detached { GitHubBridge.myPRs() }.value
             async let reviewResult = Task.detached { GitHubBridge.reviewPRs() }.value
             async let reposResult = Task.detached { GitHubBridge.repos() }.value
-            let (notificationsData, myData, reviewData, reposData) = await (notificationsResult, myResult, reviewResult, reposResult)
+            async let contributionsResult = Task.detached { GitHubBridge.contributions() }.value
+            async let issuesResult = Task.detached { GitHubBridge.issues() }.value
+            async let dependabotResult = Task.detached { GitHubBridge.dependabot() }.value
+            let (notificationsData, myData, reviewData, reposData, contributionsData, issuesData, dependabotData) = await (notificationsResult, myResult, reviewResult, reposResult, contributionsResult, issuesResult, dependabotResult)
 
             notifications = GitHubBridge.parseNotifications(notificationsData.output)
             myPRs = GitHubBridge.parsePRs(myData.output)
             reviewPRs = GitHubBridge.parsePRs(reviewData.output)
             repos = GitHubBridge.parseRepos(reposData.output)
+            contributions = GitHubBridge.parseContributions(contributionsData.output)
+            issuesCount = GitHubBridge.parsePRs(issuesData.output).count
+            dependabotCount = GitHubBridge.parsePRs(dependabotData.output).count
             loading = false
         }
     }
@@ -49,5 +61,21 @@ final class GitHubStore {
     func open(_ url: String) {
         guard let target = URL(string: url) else { return }
         NSWorkspace.shared.open(target)
+    }
+
+    func openDetail(_ pr: GHPullRequest) {
+        detailPR = pr
+        detailBody = ""
+        loadingDetail = true
+        Task {
+            let result = await Task.detached { GitHubBridge.prDetail(repo: pr.repo, number: pr.number) }.value
+            detailBody = GitHubBridge.parseBody(result.output)
+            loadingDetail = false
+        }
+    }
+
+    func closeDetail() {
+        detailPR = nil
+        detailBody = ""
     }
 }

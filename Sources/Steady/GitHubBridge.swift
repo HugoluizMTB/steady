@@ -31,6 +31,38 @@ struct GHRepo: Identifiable, Sendable {
     let stars: Int
 }
 
+struct GHDay: Identifiable, Sendable {
+    let date: Date
+    let count: Int
+    let colorHex: String
+    var id: Date { date }
+}
+
+struct GHContributions: Sendable {
+    let total: Int
+    let weeks: [[GHDay]]
+
+    var days: [GHDay] { weeks.flatMap { $0 } }
+
+    var currentStreak: Int {
+        let all = days
+        guard !all.isEmpty else { return 0 }
+        var index = all.count - 1
+        if all[index].count == 0 { index -= 1 }
+        var streak = 0
+        while index >= 0, all[index].count > 0 { streak += 1; index -= 1 }
+        return streak
+    }
+
+    var longestStreak: Int {
+        var best = 0, run = 0
+        for day in days {
+            if day.count > 0 { run += 1; best = max(best, run) } else { run = 0 }
+        }
+        return best
+    }
+}
+
 enum GitHubBridge {
     struct RunResult: Sendable {
         let output: Data
@@ -50,6 +82,14 @@ enum GitHubBridge {
     static func myPRs() -> RunResult { run(["search", "prs", "--author=@me", "--state=open", "--limit", "30", "--json", "title,url,number,updatedAt"]) }
     static func reviewPRs() -> RunResult { run(["search", "prs", "--review-requested=@me", "--state=open", "--limit", "30", "--json", "title,url,number,updatedAt"]) }
     static func repos() -> RunResult { run(["repo", "list", "--limit", "20", "--json", "name,nameWithOwner,description,url,pushedAt,isPrivate,stargazerCount"]) }
+    static func contributions() -> RunResult { run(["api", "graphql", "-f", "query=\(contributionsQuery)"]) }
+    static func issues() -> RunResult { run(["search", "issues", "--assignee=@me", "--state=open", "--limit", "50", "--json", "title,url,number,updatedAt"]) }
+    static func dependabot() -> RunResult { run(["search", "prs", "--author=app/dependabot", "--state=open", "--limit", "50", "--json", "title,url,number,updatedAt"]) }
+    static func prDetail(repo: String, number: Int) -> RunResult { run(["pr", "view", String(number), "--repo", repo, "--json", "title,body,url,state"]) }
+
+    static func parseBody(_ data: Data) -> String {
+        (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["body"] as? String ?? ""
+    }
 
     static func parseLogin(_ result: RunResult) -> String? {
         let value = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -108,6 +148,36 @@ enum GitHubBridge {
             )
         }
     }
+
+    static func parseContributions(_ data: Data) -> GHContributions? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let viewer = (root["data"] as? [String: Any])?["viewer"] as? [String: Any],
+              let collection = viewer["contributionsCollection"] as? [String: Any],
+              let calendar = collection["contributionCalendar"] as? [String: Any] else { return nil }
+        let total = calendar["totalContributions"] as? Int ?? 0
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        let weeks = (calendar["weeks"] as? [[String: Any]] ?? []).map { week -> [GHDay] in
+            (week["contributionDays"] as? [[String: Any]] ?? []).compactMap { day in
+                guard let dateString = day["date"] as? String, let date = formatter.date(from: dateString) else { return nil }
+                return GHDay(date: date, count: day["contributionCount"] as? Int ?? 0, colorHex: contributionColor(day["contributionLevel"] as? String ?? "NONE"))
+            }
+        }
+        return GHContributions(total: total, weeks: weeks)
+    }
+
+    private static func contributionColor(_ level: String) -> String {
+        switch level {
+        case "FIRST_QUARTILE": return "0e4429"
+        case "SECOND_QUARTILE": return "006d32"
+        case "THIRD_QUARTILE": return "26a641"
+        case "FOURTH_QUARTILE": return "39d353"
+        default: return "1b1f24"
+        }
+    }
+
+    private static let contributionsQuery = "query { viewer { contributionsCollection { contributionCalendar { totalContributions weeks { contributionDays { date contributionCount contributionLevel } } } } } }"
 
     private static func run(_ args: [String]) -> RunResult {
         guard let gh = resolvedPath else {
