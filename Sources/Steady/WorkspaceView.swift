@@ -4,17 +4,19 @@ enum PaneApp: String, CaseIterable, Identifiable {
     case claude, slack, codex, github, linear, notion, figma, gmail, calendar
     var id: String { rawValue }
     var context: SteadyContext { SteadyData.context(rawValue) ?? SteadyData.contexts[0] }
+    var comingSoon: Bool { self == .slack || self == .figma }
 
     @MainActor @ViewBuilder func view() -> some View {
         switch self {
         case .claude: ClaudeSessionsPanel(onSnooze: {}, onResolve: {})
         case .codex: CodexSessionsPanel(onSnooze: {}, onResolve: {})
         case .linear: LinearPanel(onSnooze: {}, onResolve: {})
-        case .slack: SlackPanel(onSnooze: {}, onResolve: {})
+        case .notion: NotionPanel(onSnooze: {}, onResolve: {})
+        case .slack: ComingSoonPanel(id: "slack", onSnooze: {}, onResolve: {})
+        case .figma: ComingSoonPanel(id: "figma", onSnooze: {}, onResolve: {})
         case .calendar: CalendarPanel(onSnooze: {}, onResolve: {})
         case .gmail: MailPanel(onSnooze: {}, onResolve: {})
         case .github: GitHubPanel(onSnooze: {}, onResolve: {})
-        default: GenericPanel(id: rawValue, onSnooze: {}, onResolve: {})
         }
     }
 }
@@ -35,17 +37,24 @@ enum WorkLayout: String, CaseIterable, Identifiable {
 
 struct WorkspaceView: View {
     @State private var layout: WorkLayout = .single
-    @State private var panes: [PaneApp] = [.claude, .linear, .codex, .slack]
+    @State private var panes: [PaneApp] = [.claude, .linear, .codex, .github]
     @State private var focused = 0
+    @AppStorage("steady.onboardingDone") private var onboardingDone = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            Rectangle().fill(SteadyPalette.line).frame(height: 1)
-            body(for: layout)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            VStack(spacing: 0) {
+                topBar
+                Rectangle().fill(SteadyPalette.line).frame(height: 1)
+                body(for: layout)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(calmBackground)
+            if !onboardingDone {
+                OnboardingView { withAnimation(.easeInOut(duration: 0.3)) { onboardingDone = true } }
+                    .transition(.opacity)
+            }
         }
-        .background(calmBackground)
         .frame(minWidth: 720, minHeight: 480)
     }
 
@@ -64,7 +73,7 @@ struct WorkspaceView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(PaneApp.allCases) { app in
-                        TopBarIcon(context: app.context, selected: panes[focused] == app, activity: activity(for: app)) {
+                        TopBarIcon(context: app.context, selected: panes[focused] == app, activity: activity(for: app), comingSoon: app.comingSoon) {
                             withAnimation(.easeInOut(duration: 0.22)) { panes[focused] = app }
                         }
                     }
@@ -142,6 +151,7 @@ private struct TopBarIcon: View {
     let context: SteadyContext
     let selected: Bool
     let activity: ToolActivity
+    let comingSoon: Bool
     let action: () -> Void
 
     @State private var pulse = false
@@ -157,10 +167,21 @@ private struct TopBarIcon: View {
                 .background(RoundedRectangle(cornerRadius: 15).fill(selected ? Color.white.opacity(0.09) : .clear))
                 .overlay(RoundedRectangle(cornerRadius: 15).stroke(selected ? Color.white.opacity(0.28) : .clear, lineWidth: 1.5))
                 .overlay(alignment: .topTrailing) { badge }
+                .overlay(alignment: .bottomTrailing) { soonTag }
                 .contentShape(RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(.plain)
-        .help(context.name)
+        .help(comingSoon ? "\(context.name) — coming soon" : context.name)
+    }
+
+    @ViewBuilder private var soonTag: some View {
+        if comingSoon {
+            Text("soon").font(.system(size: 8, weight: .bold)).foregroundStyle(Color(hex: "0b0d0f"))
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(Capsule().fill(Color(hex: "cfd2d6")))
+                .overlay(Capsule().stroke(SteadyPalette.canvas, lineWidth: 1.5))
+                .offset(x: 3, y: 2)
+        }
     }
 
     private var badgeText: String { activity.badge > 99 ? "99+" : "\(activity.badge)" }

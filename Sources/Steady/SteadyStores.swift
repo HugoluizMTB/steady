@@ -9,9 +9,11 @@ final class SteadyStores {
     let portPilot = PortPilotHost()
     let sessions = SessionStore()
     let linear = LinearProvider()
+    let notion = NotionProvider()
     let slack = SlackProvider()
     let clipboard = ClipboardManager()
     let mail = MailStore()
     let github = GitHubStore()
+    let calendar = CalendarStore()
     private init() {}
 }
