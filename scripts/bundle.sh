@@ -38,10 +38,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Sign with the developer's stable Apple identity so the Keychain (Touch ID) works
-# across rebuilds. Falls back to ad-hoc if the identity is unavailable.
-SIGN_IDENTITY="${STEADY_SIGN_IDENTITY:-REDACTED}"
-IDENTITY_HASH="$(security find-identity -v -p codesigning 2>/dev/null | grep "$SIGN_IDENTITY" | head -1 | awk '{print $2}')"
+# Sign with a local Apple identity so the Keychain (Touch ID) stays stable across
+# rebuilds. Set STEADY_SIGN_IDENTITY to force a specific one; otherwise the first
+# local Apple Development / Developer ID identity is used, falling back to ad-hoc.
+if [ -n "${STEADY_SIGN_IDENTITY:-}" ]; then
+  IDENTITY_HASH="$(security find-identity -v -p codesigning 2>/dev/null | grep "$STEADY_SIGN_IDENTITY" | head -1 | awk '{print $2}')"
+else
+  IDENTITY_HASH="$(security find-identity -v -p codesigning 2>/dev/null | grep -E 'Apple Development|Developer ID Application' | head -1 | awk '{print $2}')"
+fi
 if [ -n "$IDENTITY_HASH" ]; then
   echo "→ signing with $IDENTITY_HASH"
   codesign --force --deep --timestamp=none --sign "$IDENTITY_HASH" "$APP"
