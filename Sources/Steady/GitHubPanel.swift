@@ -6,9 +6,6 @@ struct GitHubPanel: View {
     let onResolve: () -> Void
 
     private let store = SteadyStores.shared.github
-    @State private var section: Section = .notifications
-
-    enum Section: String, CaseIterable { case notifications = "Inbox", prs = "PRs", repos = "Repos" }
 
     private var context: SteadyContext { SteadyData.context("github") ?? SteadyData.contexts[0] }
 
@@ -19,6 +16,9 @@ struct GitHubPanel: View {
             content
         }
         .onAppear { store.loadIfNeeded() }
+        .sheet(item: Binding(get: { store.detailPR }, set: { if $0 == nil { store.closeDetail() } })) { pr in
+            PRDetailView(store: store, pr: pr)
+        }
     }
 
     private var subtitle: String {
@@ -28,7 +28,7 @@ struct GitHubPanel: View {
         case .unauth: return "Not signed in to gh"
         case .ready:
             let account = store.login.map { "@\($0)" } ?? ""
-            return "\(store.unreadCount) unread  ·  \(account)"
+            return "\(account)  ·  \(store.myPRs.count) open  ·  \(store.reviewPRs.count) to review"
         }
     }
 
@@ -36,197 +36,257 @@ struct GitHubPanel: View {
         switch store.access {
         case .missing: GitHubNoticeView(icon: "terminal", title: "gh CLI not found", message: "Install GitHub CLI (brew install gh) and sign in with gh auth login, then reopen this pane.")
         case .unauth: GitHubNoticeView(icon: "person.crop.circle.badge.xmark", title: "Sign in to gh", message: "Run gh auth login in a terminal, then hit refresh.")
-        case .unknown, .ready: ready
+        case .unknown, .ready: dashboard
         }
     }
 
-    private var ready: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Rectangle().fill(SteadyPalette.line).frame(height: 1)
-            Group {
-                switch section {
-                case .notifications: notificationsView
-                case .prs: prsView
-                case .repos: reposView
-                }
-            }
-        }
-    }
-
-    private var toolbar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 2) {
-                ForEach(Section.allCases, id: \.self) { item in
-                    segment(item)
-                }
-            }
-            .padding(3)
-            .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.05)))
-            Spacer()
-            Button { store.refresh() } label: {
-                Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(SteadyPalette.muted).frame(width: 30, height: 30)
-                    .overlay(Circle().stroke(SteadyPalette.line))
-            }
-            .buttonStyle(.plain)
-            .disabled(store.loading)
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-    }
-
-    private func segment(_ item: Section) -> some View {
-        Button { section = item } label: {
-            Text(item.rawValue).font(.system(size: 12, weight: .medium))
-                .foregroundStyle(section == item ? SteadyPalette.ink : SteadyPalette.muted)
-                .padding(.horizontal, 12).frame(height: 26)
-                .background(RoundedRectangle(cornerRadius: 7).fill(section == item ? Color.white.opacity(0.08) : .clear))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var notificationsView: some View {
-        listOrEmpty(store.notifications.isEmpty, empty: "Inbox zero.") {
-            ForEach(store.notifications) { item in
-                GHNotificationRow(item: item) { store.open(item.url) }
-            }
-        }
-    }
-
-    private var prsView: some View {
-        listOrEmpty(store.reviewPRs.isEmpty && store.myPRs.isEmpty, empty: "No open pull requests.") {
-            if !store.reviewPRs.isEmpty {
-                GHSectionLabel(text: "Awaiting your review")
-                ForEach(store.reviewPRs) { pr in GHPullRequestRow(pr: pr) { store.open(pr.url) } }
-            }
-            if !store.myPRs.isEmpty {
-                GHSectionLabel(text: "Your open PRs")
-                ForEach(store.myPRs) { pr in GHPullRequestRow(pr: pr) { store.open(pr.url) } }
-            }
-        }
-    }
-
-    private var reposView: some View {
-        listOrEmpty(store.repos.isEmpty, empty: "No repositories.") {
-            ForEach(store.repos) { repo in GHRepoRow(repo: repo) { store.open(repo.url) } }
-        }
-    }
-
-    @ViewBuilder private func listOrEmpty<Content: View>(_ isEmpty: Bool, empty: String, @ViewBuilder content: () -> Content) -> some View {
-        if isEmpty {
-            VStack(spacing: 8) {
-                if store.loading { ProgressView().controlSize(.small) }
-                else { Text(empty).font(.system(size: 12)).foregroundStyle(SteadyPalette.muted) }
+    private var dashboard: some View {
+        VStack(spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                pullRequestTable
+                bento
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 6) { content() }
-                    .padding(16)
-            }
+            graphStrip
         }
+        .padding(16)
     }
-}
 
-private struct GHSectionLabel: View {
-    let text: String
-    var body: some View {
-        Text(text).font(.system(size: 11, weight: .semibold)).foregroundStyle(Color(hex: "b6b9be"))
-            .padding(.top, 6).padding(.leading, 2)
+    // MARK: Pull request table
+
+    private var taggedPRs: [TaggedPR] {
+        store.reviewPRs.map { TaggedPR(pr: $0, tag: .review) } + store.myPRs.map { TaggedPR(pr: $0, tag: .mine) }
     }
-}
 
-private struct GHNotificationRow: View {
-    let item: GHNotification
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 11) {
-                Circle().fill(item.unread ? SteadyPalette.mint : Color.clear)
-                    .frame(width: 7, height: 7)
-                    .overlay(Circle().stroke(item.unread ? Color.clear : SteadyPalette.lineStrong))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title).font(.system(size: 13, weight: item.unread ? .semibold : .medium))
-                        .foregroundStyle(SteadyPalette.ink).lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text(item.repo).font(.system(size: 11)).foregroundStyle(Color(hex: "a9acb1")).lineLimit(1)
-                        ReasonTag(reason: item.reason)
+    private var pullRequestTable: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Pull requests").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color(hex: "b6b9be"))
+                Spacer()
+                Button { store.refresh() } label: {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold)).foregroundStyle(SteadyPalette.muted)
+                }
+                .buttonStyle(.plain).disabled(store.loading)
+            }
+            if taggedPRs.isEmpty {
+                Text(store.loading ? "Loading…" : "No open pull requests.")
+                    .font(.system(size: 12)).foregroundStyle(SteadyPalette.muted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 5) {
+                        ForEach(taggedPRs) { item in
+                            PRRow(pr: item.pr, tag: item.tag) { store.openDetail(item.pr) }
+                        }
                     }
                 }
-                Spacer(minLength: 8)
-                Text(relativeTime(item.updated)).font(.system(size: 10)).foregroundStyle(SteadyPalette.muted)
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color(hex: "16191d").opacity(item.unread ? 0.85 : 0.5)))
-            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(SteadyPalette.line))
-            .contentShape(RoundedRectangle(cornerRadius: 11))
         }
-        .buttonStyle(.plain)
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(hex: "16191d").opacity(0.4)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(SteadyPalette.line))
+    }
+
+    // MARK: Bento
+
+    private var bento: some View {
+        VStack(spacing: 10) {
+            StreakCard(contributions: store.contributions)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                StatTile(value: store.myPRs.count, label: "open PRs", icon: "arrow.triangle.pull", accent: false) { store.open("https://github.com/pulls") }
+                StatTile(value: store.reviewPRs.count, label: "to review", icon: "eye.fill", accent: !store.reviewPRs.isEmpty) { store.open("https://github.com/pulls/review-requested") }
+                StatTile(value: store.issuesCount, label: "issues", icon: "smallcircle.filled.circle", accent: false) { store.open("https://github.com/issues") }
+                StatTile(value: store.dependabotCount, label: "dependabot", icon: "shippingbox.fill", accent: !(store.dependabotCount == 0)) { store.open("https://github.com/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot") }
+                StatTile(value: store.unreadCount, label: "notifications", icon: "bell.fill", accent: store.unreadCount > 0) { store.open("https://github.com/notifications") }
+                StatTile(value: store.repos.count, label: "repos", icon: "book.closed.fill", accent: false) { store.open("https://github.com/\(store.login ?? "")?tab=repositories") }
+            }
+        }
+        .frame(width: 300)
+    }
+
+    // MARK: Contribution strip
+
+    @ViewBuilder private var graphStrip: some View {
+        if let contributions = store.contributions {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Contributions").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color(hex: "b6b9be"))
+                    Spacer()
+                    Text("\(contributions.total) this year").font(.system(size: 11)).foregroundStyle(SteadyPalette.muted)
+                }
+                ContributionGraph(weeks: contributions.weeks)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(hex: "16191d").opacity(0.4)))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(SteadyPalette.line))
+        }
     }
 }
 
-private struct ReasonTag: View {
-    let reason: String
-    var body: some View {
-        Text(reason.replacingOccurrences(of: "_", with: " "))
-            .font(.system(size: 9, weight: .semibold)).foregroundStyle(SteadyPalette.muted)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(Capsule().fill(Color.white.opacity(0.06)))
-    }
-}
+private enum PRTag { case review, mine }
 
-private struct GHPullRequestRow: View {
+private struct TaggedPR: Identifiable {
     let pr: GHPullRequest
+    let tag: PRTag
+    var id: String { (tag == .review ? "r:" : "m:") + pr.url }
+}
+
+private struct PRRow: View {
+    let pr: GHPullRequest
+    let tag: PRTag
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 11) {
-                Image(systemName: "arrow.triangle.pull").font(.system(size: 12)).foregroundStyle(SteadyPalette.positive)
+            HStack(spacing: 10) {
+                Image(systemName: tag == .review ? "eye.fill" : "arrow.triangle.pull")
+                    .font(.system(size: 11)).foregroundStyle(tag == .review ? SteadyPalette.mint : SteadyPalette.positive)
+                    .frame(width: 16)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(pr.title).font(.system(size: 13, weight: .medium)).foregroundStyle(SteadyPalette.ink).lineLimit(1)
                     Text("\(pr.repo)  ·  #\(pr.number)").font(.system(size: 11)).foregroundStyle(SteadyPalette.muted).lineLimit(1)
                 }
                 Spacer(minLength: 8)
+                Text(tag == .review ? "review" : "yours")
+                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(SteadyPalette.muted)
+                    .padding(.horizontal, 6).padding(.vertical, 2).background(Capsule().fill(Color.white.opacity(0.06)))
                 Text(relativeTime(pr.updated)).font(.system(size: 10)).foregroundStyle(SteadyPalette.muted)
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color(hex: "16191d").opacity(0.72)))
-            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(SteadyPalette.line))
-            .contentShape(RoundedRectangle(cornerRadius: 11))
+            .padding(.horizontal, 10).padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(hex: "16191d").opacity(0.7)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(SteadyPalette.line))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
     }
 }
 
-private struct GHRepoRow: View {
-    let repo: GHRepo
-    let onTap: () -> Void
+private struct StatTile: View {
+    let value: Int
+    let label: String
+    let icon: String
+    let accent: Bool
+    let action: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 11) {
-                Image(systemName: repo.isPrivate ? "lock.fill" : "book.closed.fill")
-                    .font(.system(size: 12)).foregroundStyle(SteadyPalette.muted)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(repo.name).font(.system(size: 13, weight: .medium)).foregroundStyle(SteadyPalette.ink).lineLimit(1)
-                    if !repo.detail.isEmpty {
-                        Text(repo.detail).font(.system(size: 11)).foregroundStyle(SteadyPalette.muted).lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 8)
-                if repo.stars > 0 {
-                    Label("\(repo.stars)", systemImage: "star.fill").font(.system(size: 10)).foregroundStyle(SteadyPalette.muted)
-                }
-                Text(relativeTime(repo.pushed)).font(.system(size: 10)).foregroundStyle(SteadyPalette.muted)
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 5) {
+                Image(systemName: icon).font(.system(size: 12)).foregroundStyle(accent ? SteadyPalette.mint : SteadyPalette.muted)
+                Text("\(value)").font(.system(size: 22, weight: .bold)).foregroundStyle(SteadyPalette.ink)
+                Text(label).font(.system(size: 10)).foregroundStyle(SteadyPalette.muted)
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color(hex: "16191d").opacity(0.72)))
-            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(SteadyPalette.line))
-            .contentShape(RoundedRectangle(cornerRadius: 11))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(11)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(hex: "16191d").opacity(0.72)))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(accent ? SteadyPalette.mint.opacity(0.3) : SteadyPalette.line))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct StreakCard: View {
+    let contributions: GHContributions?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "flame.fill").font(.system(size: 20)).foregroundStyle(SteadyPalette.mint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(contributions?.currentStreak ?? 0) day streak").font(.system(size: 16, weight: .bold)).foregroundStyle(SteadyPalette.ink)
+                Text("\(contributions?.longestStreak ?? 0) longest").font(.system(size: 11)).foregroundStyle(SteadyPalette.muted)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(SteadyPalette.mint.opacity(0.07)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(SteadyPalette.mint.opacity(0.22)))
+    }
+}
+
+private struct ContributionGraph: View {
+    let weeks: [[GHDay]]
+
+    private let levels = ["1b1f24", "0e4429", "006d32", "26a641", "39d353"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 3) {
+                        ForEach(Array(weeks.enumerated()), id: \.offset) { index, week in
+                            VStack(spacing: 3) {
+                                ForEach(week) { day in
+                                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                                        .fill(Color(hex: day.colorHex))
+                                        .frame(width: 11, height: 11)
+                                }
+                            }
+                            .id(index)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .onAppear { proxy.scrollTo(weeks.count - 1, anchor: .trailing) }
+            }
+            legend
+        }
+    }
+
+    private var legend: some View {
+        HStack(spacing: 4) {
+            Text("Less").font(.system(size: 9)).foregroundStyle(SteadyPalette.muted)
+            ForEach(levels, id: \.self) { hex in
+                RoundedRectangle(cornerRadius: 2, style: .continuous).fill(Color(hex: hex)).frame(width: 10, height: 10)
+            }
+            Text("More").font(.system(size: 9)).foregroundStyle(SteadyPalette.muted)
+        }
+    }
+}
+
+private struct PRDetailView: View {
+    let store: GitHubStore
+    let pr: GHPullRequest
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button { store.closeDetail() } label: {
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold)).foregroundStyle(SteadyPalette.muted)
+                }
+                .buttonStyle(.plain)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pr.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(SteadyPalette.ink).lineLimit(2)
+                    Text("\(pr.repo)  ·  #\(pr.number)").font(.system(size: 11)).foregroundStyle(SteadyPalette.muted)
+                }
+                Spacer(minLength: 8)
+                Button { store.open(pr.url) } label: {
+                    Label("Open", systemImage: "arrow.up.right").font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color(hex: "102019")).padding(.horizontal, 12).frame(height: 28)
+                        .background(Capsule().fill(SteadyPalette.mint))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(14)
+            Rectangle().fill(SteadyPalette.line).frame(height: 1)
+            ScrollView {
+                if store.loadingDetail {
+                    ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.top, 40)
+                } else {
+                    Text(rendered).font(.system(size: 13)).foregroundStyle(Color(hex: "d4d6da"))
+                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                }
+            }
+        }
+        .frame(width: 600, height: 560)
+        .background(SteadyPalette.canvas)
+    }
+
+    private var rendered: AttributedString {
+        let body = store.detailBody.isEmpty ? "(No description)" : store.detailBody
+        return (try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body)
     }
 }
 
