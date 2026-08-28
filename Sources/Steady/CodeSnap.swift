@@ -234,7 +234,7 @@ struct CodeSnapWindow: View {
     }
 
     private var toolbar: some View {
-        GlassEffectContainer(spacing: 10) {
+        GlassContainer(spacing: 10) {
             HStack(spacing: 14) {
                 HStack(spacing: 8) {
                     ForEach(codeSnapGradients) { option in
@@ -260,14 +260,14 @@ struct CodeSnapWindow: View {
                         .padding(.horizontal, 16).frame(height: 36)
                 }
                 .buttonStyle(.plain)
-                .glassEffect(.regular.tint(Color(red: 0.36, green: 0.82, blue: 0.55).opacity(0.8)).interactive(), in: Capsule())
+                .glassEffectCompat(in: Capsule(), tint: Color(red: 0.36, green: 0.82, blue: 0.55).opacity(0.8), interactive: true)
                 Button { saveImage() } label: {
                     Label("Save PNG", systemImage: "square.and.arrow.down")
                         .font(.system(size: 12, weight: .medium)).foregroundStyle(.white)
                         .padding(.horizontal, 16).frame(height: 36)
                 }
                 .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: Capsule())
+                .glassEffectCompat(in: Capsule(), interactive: true)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
         }

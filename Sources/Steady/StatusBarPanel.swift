@@ -35,7 +35,7 @@ struct IslandContent: View {
     var body: some View {
         VStack(spacing: 8) {
             header
-            GlassEffectContainer(spacing: 10) {
+            GlassContainer(spacing: 10) {
                 stage
             }
         }
@@ -50,14 +50,14 @@ struct IslandContent: View {
                 Image(systemName: "circle.hexagongrid.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .frame(width: 28, height: 28)
-                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .glassEffectCompat(in: RoundedRectangle(cornerRadius: 9, style: .continuous), interactive: true)
             } else {
                 Button {
                     withAnimation(.snappy(duration: 0.2)) { selected = nil }
                 } label: {
                     Image(systemName: "chevron.backward")
                 }
-                .buttonStyle(.glass)
+                .glassButtonStyle()
             }
 
             Text(selected?.title ?? "Steady")
@@ -72,7 +72,7 @@ struct IslandContent: View {
             } label: {
                 Image(systemName: "macwindow")
             }
-            .buttonStyle(.glass)
+            .glassButtonStyle()
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
