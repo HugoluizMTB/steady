@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum PaneApp: String, CaseIterable, Identifiable {
-    case claude, slack, codex, linear, notion, figma, gmail, calendar
+    case claude, slack, codex, github, linear, notion, figma, gmail, calendar
     var id: String { rawValue }
     var context: SteadyContext { SteadyData.context(rawValue) ?? SteadyData.contexts[0] }
 
@@ -11,6 +11,9 @@ enum PaneApp: String, CaseIterable, Identifiable {
         case .codex: CodexSessionsPanel(onSnooze: {}, onResolve: {})
         case .linear: LinearPanel(onSnooze: {}, onResolve: {})
         case .slack: SlackPanel(onSnooze: {}, onResolve: {})
+        case .calendar: CalendarPanel(onSnooze: {}, onResolve: {})
+        case .gmail: MailPanel(onSnooze: {}, onResolve: {})
+        case .github: GitHubPanel(onSnooze: {}, onResolve: {})
         default: GenericPanel(id: rawValue, onSnooze: {}, onResolve: {})
         }
     }
@@ -61,17 +64,9 @@ struct WorkspaceView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(PaneApp.allCases) { app in
-                        Button { withAnimation(.easeInOut(duration: 0.22)) { panes[focused] = app } } label: {
-                            BrandIcon(context: app.context, size: 42)
-                                .saturation(panes[focused] == app ? 1 : 0.25)
-                                .opacity(panes[focused] == app ? 1 : 0.42)
-                                .padding(9)
-                                .background(RoundedRectangle(cornerRadius: 15).fill(panes[focused] == app ? Color.white.opacity(0.09) : .clear))
-                                .overlay(RoundedRectangle(cornerRadius: 15).stroke(panes[focused] == app ? Color.white.opacity(0.28) : .clear, lineWidth: 1.5))
-                                .contentShape(RoundedRectangle(cornerRadius: 15))
+                        TopBarIcon(context: app.context, selected: panes[focused] == app, activity: activity(for: app)) {
+                            withAnimation(.easeInOut(duration: 0.22)) { panes[focused] = app }
                         }
-                        .buttonStyle(.plain)
-                        .help(app.context.name)
                     }
                 }
                 .padding(.horizontal, 2)
@@ -93,6 +88,7 @@ struct WorkspaceView: View {
                     .help("\(option.paneCount) pane\(option.paneCount == 1 ? "" : "s")")
                 }
             }
+
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
         .glassEffect(.regular.tint(.black.opacity(0.18)), in: Rectangle())
@@ -122,6 +118,64 @@ struct WorkspaceView: View {
              onFocus: { focused = index },
              onChange: { panes[index] = $0 })
             .frame(minWidth: 280, minHeight: 220, maxHeight: .infinity)
+    }
+
+    private func activity(for app: PaneApp) -> ToolActivity {
+        let sessions = SteadyStores.shared.sessions
+        switch app {
+        case .claude: return ToolActivity(badge: sessions.claude.filter { $0.state == .running }.count)
+        case .codex: return ToolActivity(badge: sessions.codex.filter { $0.state == .running }.count)
+        case .gmail: return ToolActivity(badge: SteadyStores.shared.mail.unreadCount)
+        case .github: return ToolActivity(badge: SteadyStores.shared.github.unreadCount)
+        default: return .none
+        }
+    }
+}
+
+struct ToolActivity {
+    let badge: Int
+    var active: Bool { badge > 0 }
+    static let none = ToolActivity(badge: 0)
+}
+
+private struct TopBarIcon: View {
+    let context: SteadyContext
+    let selected: Bool
+    let activity: ToolActivity
+    let action: () -> Void
+
+    @State private var pulse = false
+
+    private var lit: Bool { selected || activity.active }
+
+    var body: some View {
+        Button(action: action) {
+            BrandIcon(context: context, size: 42)
+                .saturation(lit ? 1 : 0.25)
+                .opacity(lit ? 1 : 0.42)
+                .padding(9)
+                .background(RoundedRectangle(cornerRadius: 15).fill(selected ? Color.white.opacity(0.09) : .clear))
+                .overlay(RoundedRectangle(cornerRadius: 15).stroke(selected ? Color.white.opacity(0.28) : .clear, lineWidth: 1.5))
+                .overlay(alignment: .topTrailing) { badge }
+                .contentShape(RoundedRectangle(cornerRadius: 15))
+        }
+        .buttonStyle(.plain)
+        .help(context.name)
+    }
+
+    private var badgeText: String { activity.badge > 99 ? "99+" : "\(activity.badge)" }
+
+    @ViewBuilder private var badge: some View {
+        if activity.badge > 0 {
+            Text(badgeText)
+                .font(.system(size: 10, weight: .bold)).foregroundStyle(Color(hex: "102019"))
+                .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16)
+                .background(Capsule().fill(SteadyPalette.mint))
+                .overlay(Capsule().stroke(SteadyPalette.canvas, lineWidth: 1.5))
+                .scaleEffect(pulse ? 1.0 : 0.9)
+                .offset(x: 4, y: -2)
+                .onAppear { withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) { pulse = true } }
+        }
     }
 }
 

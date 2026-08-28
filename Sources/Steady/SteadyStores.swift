@@ -11,5 +11,7 @@ final class SteadyStores {
     let linear = LinearProvider()
     let slack = SlackProvider()
     let clipboard = ClipboardManager()
+    let mail = MailStore()
+    let github = GitHubStore()
     private init() {}
 }

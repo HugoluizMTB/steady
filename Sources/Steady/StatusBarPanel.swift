@@ -29,8 +29,8 @@ struct IslandContent: View {
     @State private var selected: IslandTool?
 
     private let compactWidth: CGFloat = 360
-    private let overviewHeight: CGFloat = 295
-    private let detailHeight: CGFloat = 295
+    private let overviewHeight: CGFloat = 372
+    private let detailHeight: CGFloat = 440
 
     var body: some View {
         VStack(spacing: 8) {
@@ -80,9 +80,10 @@ struct IslandContent: View {
 
     @ViewBuilder private var stage: some View {
         if selected == nil {
-            overview
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .frame(height: overviewHeight, alignment: .top)
+            ScrollView(.vertical, showsIndicators: false) {
+                overview
+            }
+            .frame(height: overviewHeight)
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 stageContent
@@ -125,7 +126,7 @@ struct IslandContent: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, alignment: .top)
     }
 }
 

@@ -31,12 +31,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHumanReadableCopyright</key><string>MIT Licensed</string>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>Steady shows your upcoming events from the calendar accounts already set up on this Mac.</string>
+  <key>NSCalendarsUsageDescription</key><string>Steady shows your upcoming events from the calendar accounts already set up on this Mac.</string>
+  <key>NSAppleEventsUsageDescription</key><string>Steady reads and sends mail through the Mail app already set up on this Mac.</string>
 </dict>
 </plist>
 PLIST
 
-# Ad-hoc sign so networking entitlements/Keychain work locally.
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+# Sign with the developer's stable Apple identity so the Keychain (Touch ID) works
+# across rebuilds. Falls back to ad-hoc if the identity is unavailable.
+SIGN_IDENTITY="${STEADY_SIGN_IDENTITY:-REDACTED}"
+IDENTITY_HASH="$(security find-identity -v -p codesigning 2>/dev/null | grep "$SIGN_IDENTITY" | head -1 | awk '{print $2}')"
+if [ -n "$IDENTITY_HASH" ]; then
+  echo "→ signing with $IDENTITY_HASH"
+  codesign --force --deep --timestamp=none --sign "$IDENTITY_HASH" "$APP"
+else
+  echo "→ no developer identity found, ad-hoc signing"
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+fi
 
 echo "✓ built $APP"
 echo "  open with: open \"$APP\"   (look in the menu bar)"

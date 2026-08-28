@@ -22,7 +22,7 @@ struct AgentSession: Identifiable, Sendable {
         }
     }
 
-    enum State: Sendable { case waiting, working, idle }
+    enum State: Sendable { case running, done }
 
     let id: String
     let kind: Kind
@@ -117,20 +117,9 @@ final class SessionStore {
         return metadata.metadata(for: session.persistentKey).isPinned
     }
 
-    func rename(_ session: AgentSession) {
-        let alert = NSAlert()
-        alert.messageText = "Name this session"
-        alert.informativeText = session.project
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.stringValue = title(for: session)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        metadata.setName(value.isEmpty || value == session.title ? nil : value, for: session.persistentKey)
+    func setName(_ value: String, for session: AgentSession) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        metadata.setName(trimmed.isEmpty || trimmed == session.title ? nil : trimmed, for: session.persistentKey)
         revision += 1
     }
 
@@ -306,8 +295,9 @@ enum SessionScanner {
                     claude[session.persistentKey] = session
                 }
             case .codex:
-                let session = codexSession(for: agent, profiles: codexProfiles, repository: context)
-                codex[session.persistentKey] = session
+                if let session = codexSession(for: agent, profiles: codexProfiles, repository: context) {
+                    codex[session.persistentKey] = session
+                }
             }
         }
 
@@ -377,14 +367,99 @@ enum SessionScanner {
         return nil
     }
 
-    private static func codexSession(for agent: RunningAgent, profiles: [AgentProfile], repository: RepositoryContext) -> AgentSession {
+    private static func codexSession(for agent: RunningAgent, profiles: [AgentProfile], repository: RepositoryContext) -> AgentSession? {
         let profile = profile(for: agent.command, profiles: profiles, kind: .codex)
+        let ordered = [profile] + profiles.filter { $0 != profile }
+        for candidate in ordered {
+            guard let file = codexRollout(root: candidate.root, cwd: agent.cwd, uuid: agent.uuid) else { continue }
+            let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+            return parseCodex(file, date: date, cwd: agent.cwd, pid: agent.pid, profile: candidate, repository: repository)
+        }
+        return nil
+    }
+
+    private static func codexRollout(root: String, cwd: String, uuid: String?) -> URL? {
+        let sessionsDirectory = URL(fileURLWithPath: root).appendingPathComponent("sessions")
+        let manager = FileManager.default
+        guard let enumerator = manager.enumerator(at: sessionsDirectory, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else { return nil }
+
+        var files: [(url: URL, date: Date)] = []
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            if let uuid, !url.lastPathComponent.contains(uuid) { continue }
+            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            files.append((url, date))
+        }
+
+        for entry in files.sorted(by: { $0.date > $1.date }).prefix(uuid == nil ? 150 : 6) {
+            let meta = codexMeta(entry.url)
+            if meta.subagent { continue }
+            if uuid != nil { return entry.url }
+            if meta.cwd == cwd { return entry.url }
+        }
+        return nil
+    }
+
+    private static func codexMeta(_ url: URL) -> (cwd: String, subagent: Bool, sessionId: String) {
+        for line in head(url, bytes: 8192).split(separator: "\n") {
+            guard let object = object(line), object["type"] as? String == "session_meta",
+                  let payload = object["payload"] as? [String: Any] else { continue }
+            let cwd = payload["cwd"] as? String ?? ""
+            let subagent = (payload["source"] as? [String: Any])?["subagent"] != nil
+            let sessionId = (payload["session_id"] as? String) ?? (payload["id"] as? String) ?? ""
+            return (cwd, subagent, sessionId)
+        }
+        return ("", false, "")
+    }
+
+    private static func parseCodex(_ url: URL, date: Date, cwd: String, pid: Int32, profile: AgentProfile, repository: RepositoryContext) -> AgentSession {
+        let meta = codexMeta(url)
+
+        var title = ""
+        for line in head(url).split(separator: "\n").prefix(400) {
+            guard let object = object(line), object["type"] as? String == "event_msg",
+                  let payload = object["payload"] as? [String: Any], payload["type"] as? String == "user_message",
+                  let message = payload["message"] as? String, !message.isEmpty else { continue }
+            title = message
+            break
+        }
+
+        var contextTokens = 0
+        var lastEvent = ""
+        var lastAgentMessage = ""
+        for line in tail(url).split(separator: "\n") {
+            guard let object = object(line), object["type"] as? String == "event_msg",
+                  let payload = object["payload"] as? [String: Any] else { continue }
+            let event = payload["type"] as? String ?? ""
+            lastEvent = event
+            switch event {
+            case "token_count":
+                if let info = payload["info"] as? [String: Any],
+                   let last = info["last_token_usage"] as? [String: Any],
+                   let total = last["total_tokens"] as? Int { contextTokens = total }
+            case "agent_message":
+                if let message = payload["message"] as? String { lastAgentMessage = message }
+            default:
+                break
+            }
+        }
+
+        let seconds = Date().timeIntervalSince(date)
+        let state: AgentSession.State = (lastEvent != "task_complete" && seconds < 30) ? .running : .done
+
+        let activity: String
+        switch state {
+        case .running: activity = "Codex rodando…"
+        case .done: activity = lastAgentMessage.isEmpty ? "Esperando você" : lastAgentMessage
+        }
+
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return AgentSession(
-            id: agent.uuid ?? "pid-\(agent.pid)", kind: .codex, pid: agent.pid, profile: profile,
-            cwd: agent.cwd, repository: repository.repository, branch: repository.branch,
-            title: URL(fileURLWithPath: agent.cwd).lastPathComponent, filePath: "", modified: Date(),
-            state: .working, activity: "Codex is working", model: "codex", contextTokens: 0,
-            prNumber: nil, prRepo: nil, prURL: nil, worktree: repository.worktree
+            id: meta.sessionId.isEmpty ? url.deletingPathExtension().lastPathComponent : meta.sessionId,
+            kind: .codex, pid: pid, profile: profile, cwd: cwd,
+            repository: repository.repository, branch: repository.branch,
+            title: cleanTitle.isEmpty ? "Codex session" : String(cleanTitle.prefix(100)), filePath: url.path,
+            modified: date, state: state, activity: String(activity.prefix(280)), model: "codex",
+            contextTokens: contextTokens, prNumber: nil, prRepo: nil, prURL: nil, worktree: repository.worktree
         )
     }
 
@@ -521,18 +596,14 @@ enum SessionScanner {
             }
         }
 
-        let isRecent = Date().timeIntervalSince(date) < 25
-        let state: AgentSession.State
-        if isRecent && lastConversation != "assistant" { state = .working }
-        else if lastConversation == "assistant" && stop == "end_turn" { state = .waiting }
-        else if isRecent { state = .working }
-        else { state = .idle }
+        let seconds = Date().timeIntervalSince(date)
+        let finished = lastConversation == "assistant" && stop == "end_turn"
+        let state: AgentSession.State = (!finished && seconds < 30) ? .running : .done
 
         let activity: String
         switch state {
-        case .waiting: activity = lastAssistant.isEmpty ? "Waiting for your reply" : lastAssistant
-        case .working: activity = lastTool.isEmpty ? "Working…" : "Using \(lastTool)…"
-        case .idle: activity = lastAssistant.isEmpty ? "Idle" : lastAssistant
+        case .running: activity = lastTool.isEmpty ? "Rodando…" : "Usando \(lastTool)…"
+        case .done: activity = lastAssistant.isEmpty ? "Esperando você" : lastAssistant
         }
 
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -156,9 +156,8 @@ private struct SessionInbox: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             HStack(alignment: .top, spacing: 14) {
-                SessionColumn(title: "Needs you", accent: true, sessions: sessions(in: .waiting), onOpen: { openSession = $0 })
-                SessionColumn(title: "Working", accent: false, sessions: sessions(in: .working), onOpen: { openSession = $0 })
-                SessionColumn(title: "Idle", accent: false, sessions: sessions(in: .idle), onOpen: { openSession = $0 })
+                SessionColumn(title: "Rodando", accent: false, sessions: sessions(in: .running), onOpen: { openSession = $0 })
+                SessionColumn(title: "Concluídas", accent: true, sessions: sessions(in: .done), onOpen: { openSession = $0 })
             }
             .padding(18)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -167,9 +166,9 @@ private struct SessionInbox: View {
 
     private var subtitle: String {
         if loading && sessions.isEmpty { return "Looking for live sessions…" }
-        let waiting = sessions.filter { $0.state == .waiting }.count
+        let running = sessions.filter { $0.state == .running }.count
         var values: [String] = []
-        if waiting > 0 { values.append("\(waiting) need you") }
+        if running > 0 { values.append("\(running) rodando") }
         values.append("\(sessions.count) open")
         if profiles.count > 1 { values.append("\(profiles.count) profiles") }
         return values.joined(separator: "  ·  ")
@@ -225,6 +224,9 @@ private struct SessionCard: View {
 
     private let store = SteadyStores.shared.sessions
     @State private var hovering = false
+    @State private var editing = false
+    @State private var draft = ""
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -232,7 +234,7 @@ private struct SessionCard: View {
 
             Text(session.activity)
                 .font(.system(size: 13))
-                .foregroundStyle(session.state == .waiting ? Color(hex: "eef5f1") : Color(hex: "a9acb1"))
+                .foregroundStyle(session.state == .done ? Color(hex: "eef5f1") : Color(hex: "a9acb1"))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -242,14 +244,23 @@ private struct SessionCard: View {
         .background(cardBackground)
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(borderColor, lineWidth: session.state == .waiting ? 1.2 : 0.8)
+                .stroke(borderColor, lineWidth: 0.8)
         }
-        .shadow(color: session.state == .waiting ? SteadyPalette.mint.opacity(0.10) : .clear,
-                radius: 14, x: 0, y: 6)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .onTapGesture { onOpen() }
+        .onTapGesture { if !editing { onOpen() } }
         .onHover { hovering = $0 }
         .contextMenu { sessionMenu }
+    }
+
+    private func beginEditing() {
+        draft = store.title(for: session)
+        editing = true
+        DispatchQueue.main.async { nameFocused = true }
+    }
+
+    private func commitName() {
+        store.setName(draft, for: session)
+        editing = false
     }
 
     private var header: some View {
@@ -262,10 +273,21 @@ private struct SessionCard: View {
                     .foregroundStyle(SteadyPalette.mint)
             }
 
-            Text(store.title(for: session))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(SteadyPalette.ink)
-                .lineLimit(1)
+            if editing {
+                TextField("Session name", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(SteadyPalette.ink)
+                    .focused($nameFocused)
+                    .onSubmit { commitName() }
+                    .onExitCommand { editing = false }
+            } else {
+                Text(store.title(for: session))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(SteadyPalette.ink)
+                    .lineLimit(1)
+                    .onTapGesture(count: 2) { beginEditing() }
+            }
 
             Spacer(minLength: 8)
 
@@ -313,34 +335,30 @@ private struct SessionCard: View {
                 if session.profile.label != "Default" { metadata("person", session.profile.label) }
                 if !session.visibleRepository.isEmpty { metadata("shippingbox", session.visibleRepository) }
                 if !session.branch.isEmpty { metadata("arrow.triangle.branch", session.branch) }
-                if session.state == .idle { metadata("clock", relativeTime(session.modified)) }
+                if session.state == .done { metadata("clock", relativeTime(session.modified)) }
             }
         }
     }
 
     @ViewBuilder private var stateLabel: some View {
         switch session.state {
-        case .waiting:
-            Text("Needs you")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(SteadyPalette.mint)
-        case .working:
+        case .running:
             HStack(spacing: 5) {
                 TypingDots()
-                Text("Working")
+                Text("Rodando")
             }
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(Color.orange)
-        case .idle:
-            Text("Idle")
-                .font(.system(size: 11))
-                .foregroundStyle(SteadyPalette.muted)
+        case .done:
+            Text("Concluída")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(SteadyPalette.mint)
         }
     }
 
     @ViewBuilder private var sessionMenu: some View {
         Button(store.isPinned(session) ? "Unpin" : "Pin") { store.togglePin(session) }
-        Button("Rename…") { store.rename(session) }
+        Button("Rename") { beginEditing() }
         Divider()
         Button("Open in Steady") { onOpen() }
         Button("Resume in Terminal") { store.openInTerminal(session) }
@@ -359,18 +377,15 @@ private struct SessionCard: View {
 
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(session.state == .waiting ? SteadyPalette.mint.opacity(0.075) : Color(hex: "16191d").opacity(hovering ? 0.90 : 0.72))
+            .fill(Color(hex: "16191d").opacity(hovering ? 0.90 : 0.72))
     }
 
-    private var borderColor: Color {
-        session.state == .waiting ? SteadyPalette.mint.opacity(0.54) : SteadyPalette.line
-    }
+    private var borderColor: Color { SteadyPalette.line }
 
     private var stateColor: Color {
         switch session.state {
-        case .waiting: return SteadyPalette.mint
-        case .working: return .orange
-        case .idle: return Color(hex: "5c5f66")
+        case .running: return .orange
+        case .done: return SteadyPalette.mint
         }
     }
 }
