@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Steady",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v15)],
     products: [
         .executable(name: "Steady", targets: ["Steady"]),
     ],

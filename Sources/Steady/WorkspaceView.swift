@@ -100,7 +100,7 @@ struct WorkspaceView: View {
 
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
-        .glassEffect(.regular.tint(.black.opacity(0.18)), in: Rectangle())
+        .glassEffectCompat(in: Rectangle(), tint: .black.opacity(0.18))
     }
 
     @ViewBuilder private func body(for layout: WorkLayout) -> some View {
