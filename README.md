@@ -25,22 +25,33 @@ The app is written in SwiftUI and distributed as a Swift Package executable.
 
 ### Workspace
 
-The main window supports one, two, three, or four panes. Live panes are
-available for Claude Code sessions, Codex sessions, Linear, and Slack, so you
-can keep an agent, issues, and messages in the same workspace.
+The main window supports one, two, three, or four panes. Live panes cover Claude
+Code and Codex sessions, GitHub, Calendar, Mail, Notion, and Linear — so an
+agent, your schedule, inbox, docs, and issues share one window. Slack and Figma
+are marked *coming soon*.
+
+The top bar dims each tool by default and lights it up with a count badge when it
+has activity — a running session, unread mail, or new GitHub notifications.
+
+On first launch an onboarding screen explains that everything stays on this Mac
+and lets you connect each account once.
 
 ## Integrations
 
-| Integration | What Steady does today | Setup |
-| --- | --- | --- |
-| **GitHub** | Reads your open pull requests through `gh`, including CI and review state, owner filters, favourites, and stacked PRs. | Run `gh auth login`. |
-| **Claude Code** | Shows session/weekly usage, tracks live Claude processes, reads local session metadata, and resumes a selected session in Terminal. | Install and sign in to the `claude` CLI. |
-| **Codex** | Detects live Codex processes and lets you resume a selected session in Terminal with `codex resume`. | Install and sign in to the `codex` CLI. |
-| **Linear** | Registers a local OAuth client, uses PKCE to sign in, fetches issues assigned to you through Linear MCP, groups them by state, and opens an issue in the browser. | Select **Sign in with Linear** in the workspace. No client secret is required. |
-| **Slack** | Connects to the official Slack MCP, stores the OAuth result locally, and discovers the tools available to the connected workspace. | Create a Slack app once, then enter its Client ID and Client Secret in Steady. |
+Every integration reads what is already on your Mac. Nothing is uploaded, and no
+Steady account exists.
 
-Slack currently establishes and verifies the MCP connection; a full channel and
-conversation UI is not exposed in the workspace yet.
+| Integration | What Steady does | Setup |
+| --- | --- | --- |
+| **Claude Code** | Live session board (running / done), usage, local session metadata; resume a session in Terminal. | Install the `claude` CLI. |
+| **Codex** | The same session board for Codex; resume with `codex resume`. | Install the `codex` CLI. |
+| **GitHub** | Notifications inbox, your open and review-requested pull requests, and repositories — through `gh`. The menu bar also lists open PRs with CI/review state and stacked relationships. | Run `gh auth login`. |
+| **Calendar** | Reads every calendar account already on this Mac (iCloud, Google, Exchange) via EventKit. Agenda and month views, add events, and Join buttons for Meet/Zoom/Teams links. | Grant Calendar access when asked. |
+| **Mail** | Reads and sends through the Mail app already set up on this Mac via AppleScript — sender filtering, message view, compose, and reply. No login. | Allow Automation for Mail when asked. |
+| **Notion** | Registers a local OAuth client with Notion's MCP, signs in with PKCE, and searches your workspace. | Select **Sign in with Notion**. No app or key to create. |
+| **Linear** | Registers a local OAuth client, signs in with PKCE, and fetches issues assigned to you through Linear MCP, grouped by state. | Select **Sign in with Linear**. No client secret. |
+| **Slack** | *Coming soon.* | — |
+| **Figma** | *Coming soon.* | — |
 
 ## Requirements
 
@@ -48,15 +59,18 @@ conversation UI is not exposed in the workspace yet.
 - Xcode 26 or later, including the Command Line Tools
 - Swift 6.2
 
-Some tools use local developer utilities when they are available:
+Some tools use local developer utilities and system permissions:
 
-- [GitHub CLI](https://cli.github.com/) authenticated with `gh auth login` for
-  pull requests.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for usage data.
+- [GitHub CLI](https://cli.github.com/) authenticated with `gh auth login`.
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and the `codex`
+  CLI for the session board.
 - macOS system tools such as `lsof` for port discovery.
+- Calendar access (EventKit) for the Calendar tool, and Automation access for
+  the Mail tool — both granted through the standard macOS permission prompts.
 
-Linear and Slack authorise in the browser. Steady stores their tokens and Slack
-client details in the macOS Keychain, not in the repository.
+Notion and Linear authorise in the browser with PKCE and register themselves
+dynamically, so there is no app to create and no secret to paste. Steady stores
+every token in the macOS Keychain, never in the repository.
 
 ## Run locally
 
@@ -97,10 +111,11 @@ only external Swift Package dependency.
 
 ## Privacy and credentials
 
-Steady does not include credentials in source control. OAuth tokens, Slack
-client details, and Linear credentials are stored in the macOS Keychain on the
-machine where you connect them. Preferences and local histories remain on that
-machine as well.
+Steady has no server and no account. Calendars, mail, and code sessions are read
+live from the apps already on your Mac; GitHub goes through your local `gh`. OAuth
+tokens for Notion and Linear live in the macOS Keychain on the machine where you
+connect them. Preferences and local histories stay on that machine. Nothing is
+uploaded or sent to the cloud.
 
 Before contributing, keep `.env` files, private keys, generated app bundles,
 and local screenshots out of Git. The repository's `.gitignore` already covers

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AddEventSheet: View {
-    @ObservedObject var store: CalendarStore
+    let store: CalendarStore
     let onClose: () -> Void
 
     @State private var title = ""

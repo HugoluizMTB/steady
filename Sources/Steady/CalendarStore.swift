@@ -28,17 +28,18 @@ struct CalendarEntry: Identifiable {
 }
 
 @MainActor
-final class CalendarStore: ObservableObject {
+@Observable
+final class CalendarStore {
     enum Access { case unknown, granted, denied }
 
-    private let store = EKEventStore()
-    @Published private(set) var access: Access = .unknown
-    @Published private(set) var accounts: [CalendarAccount] = []
-    @Published private(set) var writableCalendars: [WritableCalendar] = []
-    @Published private(set) var entries: [CalendarEntry] = []
-    @Published private(set) var monthEntries: [CalendarEntry] = []
-    @Published private(set) var month: Date = Date()
-    @Published private(set) var loading = false
+    @ObservationIgnored private let store = EKEventStore()
+    private(set) var access: Access = .unknown
+    private(set) var accounts: [CalendarAccount] = []
+    private(set) var writableCalendars: [WritableCalendar] = []
+    private(set) var entries: [CalendarEntry] = []
+    private(set) var monthEntries: [CalendarEntry] = []
+    private(set) var month: Date = Date()
+    private(set) var loading = false
 
     init() {
         month = startOfMonth(Date())
@@ -170,6 +171,7 @@ final class CalendarStore: ObservableObject {
         case .exchange: return "Exchange"
         case .subscribed: return "Subscribed"
         case .birthdays: return "Birthdays"
+        case .mobileMe: return "iCloud"
         @unknown default: return "Account"
         }
     }

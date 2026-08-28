@@ -5,7 +5,7 @@ struct CalendarPanel: View {
     let onSnooze: () -> Void
     let onResolve: () -> Void
 
-    @StateObject private var store = CalendarStore()
+    private let store = SteadyStores.shared.calendar
     @State private var mode: Mode = .agenda
     @State private var selectedDay = Date()
     @State private var showingAdd = false

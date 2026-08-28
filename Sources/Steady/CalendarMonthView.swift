@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CalendarMonthView: View {
-    @ObservedObject var store: CalendarStore
+    let store: CalendarStore
     @Binding var selectedDay: Date
 
     private var eventsByDay: [Date: [CalendarEntry]] { CalendarFormat.eventsByDay(store.monthEntries) }
