@@ -44,12 +44,13 @@ enum SteadyData {
     static let contexts: [SteadyContext] = [
         SteadyContext(id: "claude", name: "Claude", headline: "Continue research synthesis", detail: "2 active sessions", status: "Ready", remaining: 2, symbol: "sparkles", iconColor: .white, iconBackground: Color(hex: "d87656")),
         SteadyContext(id: "slack", name: "Slack", headline: "3 conversations need you", detail: "Product & Design", status: nil, remaining: 5, symbol: "number", iconColor: Color(hex: "e01e5a"), iconBackground: Color(hex: "101214")),
-        SteadyContext(id: "codex", name: "Codex", headline: "Review ready · steady/desktop #184", detail: "3 files changed", status: "Tests passed", remaining: 3, symbol: "chevron.left.forwardslash.chevron.right", iconColor: Color(hex: "0b0d0f"), iconBackground: Color(hex: "f4f6f8")),
+        SteadyContext(id: "codex", name: "Codex", headline: "Review ready · steady/desktop #184", detail: "3 files changed", status: "Tests passed", remaining: 3, symbol: "chevron.left.forwardslash.chevron.right", iconColor: Color(hex: "f4f6f8"), iconBackground: Color(hex: "10a37f")),
+        SteadyContext(id: "github", name: "GitHub", headline: "Open pull requests", detail: "Repos · reviews · notifications", status: nil, remaining: 0, symbol: "chevron.left.forwardslash.chevron.right", iconColor: Color(hex: "181717"), iconBackground: Color(hex: "f4f6f8")),
         SteadyContext(id: "linear", name: "Linear", headline: "2 issues assigned", detail: "Sprint 34", status: nil, remaining: 4, symbol: "square.stack.3d.up.fill", iconColor: Color(hex: "7472ff"), iconBackground: Color(hex: "151823")),
         SteadyContext(id: "notion", name: "Notion", headline: "Weekly planning draft", detail: "Edited 18m ago", status: nil, remaining: 3, symbol: "doc.text.fill", iconColor: Color(hex: "111111"), iconBackground: Color(hex: "f4f6f8")),
         SteadyContext(id: "figma", name: "Figma", headline: "Handoff comments ready", detail: "Onboarding v4", status: nil, remaining: 2, symbol: "pentagon.fill", iconColor: Color(hex: "ff7262"), iconBackground: Color(hex: "121418")),
         SteadyContext(id: "gmail", name: "Gmail", headline: "Reply to customer thread", detail: "Pilot onboarding", status: nil, remaining: 4, symbol: "envelope.fill", iconColor: Color(hex: "ea4335"), iconBackground: Color(hex: "f4f6f8")),
-        SteadyContext(id: "calendar", name: "Calendar", headline: "Prepare product review", detail: "Today at 2:00 PM", status: nil, remaining: 1, symbol: "calendar", iconColor: Color(hex: "64a5ff"), iconBackground: Color(hex: "10151d")),
+        SteadyContext(id: "calendar", name: "Calendar", headline: "Prepare product review", detail: "Today at 2:00 PM", status: nil, remaining: 1, symbol: "calendar", iconColor: Color(hex: "1a73e8"), iconBackground: Color(hex: "f4f6f8")),
     ]
 
     static let genericCopy: [String: (title: String, body: String)] = [
