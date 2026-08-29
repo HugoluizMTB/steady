@@ -15,5 +15,7 @@ final class SteadyStores {
     let mail = MailStore()
     let github = GitHubStore()
     let calendar = CalendarStore()
+    let triage = TriageCenter()
+    let settings = SettingsStore()
     private init() {}
 }
