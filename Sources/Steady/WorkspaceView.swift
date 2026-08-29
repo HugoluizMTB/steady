@@ -6,17 +6,17 @@ enum PaneApp: String, CaseIterable, Identifiable {
     var context: SteadyContext { SteadyData.context(rawValue) ?? SteadyData.contexts[0] }
     var comingSoon: Bool { self == .slack || self == .figma }
 
-    @MainActor @ViewBuilder func view() -> some View {
+    @MainActor @ViewBuilder func view(onSnooze: @escaping () -> Void, onResolve: @escaping () -> Void) -> some View {
         switch self {
-        case .claude: ClaudeSessionsPanel(onSnooze: {}, onResolve: {})
-        case .codex: CodexSessionsPanel(onSnooze: {}, onResolve: {})
-        case .linear: LinearPanel(onSnooze: {}, onResolve: {})
-        case .notion: NotionPanel(onSnooze: {}, onResolve: {})
-        case .slack: ComingSoonPanel(id: "slack", onSnooze: {}, onResolve: {})
-        case .figma: ComingSoonPanel(id: "figma", onSnooze: {}, onResolve: {})
-        case .calendar: CalendarPanel(onSnooze: {}, onResolve: {})
-        case .gmail: MailPanel(onSnooze: {}, onResolve: {})
-        case .github: GitHubPanel(onSnooze: {}, onResolve: {})
+        case .claude: ClaudeSessionsPanel(onSnooze: onSnooze, onResolve: onResolve)
+        case .codex: CodexSessionsPanel(onSnooze: onSnooze, onResolve: onResolve)
+        case .linear: LinearPanel(onSnooze: onSnooze, onResolve: onResolve)
+        case .notion: NotionPanel(onSnooze: onSnooze, onResolve: onResolve)
+        case .slack: ComingSoonPanel(id: "slack", onSnooze: onSnooze, onResolve: onResolve)
+        case .figma: ComingSoonPanel(id: "figma", onSnooze: onSnooze, onResolve: onResolve)
+        case .calendar: CalendarPanel(onSnooze: onSnooze, onResolve: onResolve)
+        case .gmail: MailPanel(onSnooze: onSnooze, onResolve: onResolve)
+        case .github: GitHubPanel(onSnooze: onSnooze, onResolve: onResolve)
         }
     }
 }
@@ -40,6 +40,17 @@ struct WorkspaceView: View {
     @State private var panes: [PaneApp] = [.claude, .linear, .codex, .github]
     @State private var focused = 0
     @AppStorage("steady.onboardingDone") private var onboardingDone = false
+    @State private var toast: String?
+    @State private var toastToken = 0
+    @State private var commandOpen = false
+    @State private var settingsOpen = false
+    @State private var lastAuto = Date()
+
+    private let triage = SteadyStores.shared.triage
+    private let settings = SteadyStores.shared.settings
+    private let heartbeat = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+
+    private var visibleTools: [PaneApp] { PaneApp.allCases.filter { !settings.isHidden($0.id) } }
 
     var body: some View {
         ZStack {
@@ -50,12 +61,25 @@ struct WorkspaceView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(calmBackground)
+            if let toast { ToastView(text: toast) }
+            if commandOpen {
+                CommandPalette(tools: visibleTools, onClose: { commandOpen = false }) { app in
+                    commandOpen = false
+                    withAnimation(.easeInOut(duration: 0.22)) { panes[focused] = app }
+                }
+            }
             if !onboardingDone {
                 OnboardingView { withAnimation(.easeInOut(duration: 0.3)) { onboardingDone = true } }
                     .transition(.opacity)
             }
         }
         .frame(minWidth: 720, minHeight: 480)
+        .sheet(isPresented: $settingsOpen) { SettingsView { settingsOpen = false } }
+        .background {
+            Button("") { commandOpen = true }.keyboardShortcut("k", modifiers: .command).opacity(0)
+            Button("") { commandOpen = false }.keyboardShortcut(.escape, modifiers: []).opacity(0)
+        }
+        .onReceive(heartbeat) { _ in autoRefresh() }
     }
 
     private var calmBackground: some View {
@@ -72,8 +96,8 @@ struct WorkspaceView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(PaneApp.allCases) { app in
-                        TopBarIcon(context: app.context, selected: panes[focused] == app, activity: activity(for: app), comingSoon: app.comingSoon) {
+                    ForEach(visibleTools) { app in
+                        TopBarIcon(context: app.context, selected: panes[focused] == app, activity: activity(for: app), comingSoon: app.comingSoon, snoozed: triage.isSnoozed(app.id)) {
                             withAnimation(.easeInOut(duration: 0.22)) { panes[focused] = app }
                         }
                     }
@@ -82,6 +106,25 @@ struct WorkspaceView: View {
             }
 
             Spacer(minLength: 8)
+
+            Button { commandOpen = true } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "command").font(.system(size: 12))
+                    Text("K").font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(SteadyPalette.muted)
+                .frame(width: 52, height: 34)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.04)))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(SteadyPalette.line))
+            }
+            .buttonStyle(.plain).help("Jump to a tool (⌘K)")
+
+            Button { settingsOpen = true } label: {
+                Image(systemName: "gearshape").font(.system(size: 15)).foregroundStyle(SteadyPalette.muted)
+                    .frame(width: 38, height: 34)
+                    .contentShape(RoundedRectangle(cornerRadius: 9))
+            }
+            .buttonStyle(.plain).help("Settings")
 
             HStack(spacing: 4) {
                 ForEach(WorkLayout.allCases) { option in
@@ -125,11 +168,14 @@ struct WorkspaceView: View {
     private func pane(_ index: Int) -> some View {
         Pane(app: panes[index], isFocused: focused == index,
              onFocus: { focused = index },
-             onChange: { panes[index] = $0 })
+             onChange: { panes[index] = $0 },
+             onSnooze: { snooze(panes[index]) },
+             onResolve: { resolve(panes[index]) })
             .frame(minWidth: 280, minHeight: 220, maxHeight: .infinity)
     }
 
     private func activity(for app: PaneApp) -> ToolActivity {
+        if triage.isSnoozed(app.id) { return .none }
         let sessions = SteadyStores.shared.sessions
         switch app {
         case .claude: return ToolActivity(badge: sessions.claude.filter { $0.state == .running }.count)
@@ -138,6 +184,42 @@ struct WorkspaceView: View {
         case .github: return ToolActivity(badge: SteadyStores.shared.github.unreadCount)
         default: return .none
         }
+    }
+
+    private func snooze(_ app: PaneApp) {
+        triage.snooze(app.id)
+        flash("Snoozed \(app.context.name) · 1h")
+    }
+
+    private func resolve(_ app: PaneApp) {
+        triage.clear(app.id)
+        if let next = visibleTools.first(where: { $0 != app && !$0.comingSoon && activity(for: $0).active }) {
+            withAnimation(.easeInOut(duration: 0.22)) { panes[focused] = next }
+            flash("Resolved · next: \(next.context.name)")
+        } else {
+            flash("Resolved · all clear")
+        }
+    }
+
+    private func flash(_ message: String) {
+        toast = message
+        toastToken += 1
+        let token = toastToken
+        Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            if toastToken == token { withAnimation { toast = nil } }
+        }
+    }
+
+    private func autoRefresh() {
+        let minutes = settings.autoRefreshMinutes
+        guard minutes > 0, Date().timeIntervalSince(lastAuto) >= Double(minutes) * 60 else { return }
+        lastAuto = Date()
+        SteadyStores.shared.github.refresh()
+        SteadyStores.shared.mail.refresh()
+        SteadyStores.shared.calendar.refresh()
+        SteadyStores.shared.linear.load()
+        SteadyStores.shared.notion.load()
     }
 }
 
@@ -152,6 +234,7 @@ private struct TopBarIcon: View {
     let selected: Bool
     let activity: ToolActivity
     let comingSoon: Bool
+    let snoozed: Bool
     let action: () -> Void
 
     @State private var pulse = false
@@ -161,25 +244,37 @@ private struct TopBarIcon: View {
     var body: some View {
         Button(action: action) {
             BrandIcon(context: context, size: 42)
-                .saturation(lit ? 1 : 0.25)
-                .opacity(lit ? 1 : 0.42)
+                .saturation(snoozed ? 0 : (lit ? 1 : 0.25))
+                .opacity(snoozed ? 0.3 : (lit ? 1 : 0.42))
                 .padding(9)
                 .background(RoundedRectangle(cornerRadius: 15).fill(selected ? Color.white.opacity(0.09) : .clear))
                 .overlay(RoundedRectangle(cornerRadius: 15).stroke(selected ? Color.white.opacity(0.28) : .clear, lineWidth: 1.5))
                 .overlay(alignment: .topTrailing) { badge }
-                .overlay(alignment: .bottomTrailing) { soonTag }
+                .overlay(alignment: .bottomTrailing) { cornerTag }
                 .contentShape(RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(.plain)
-        .help(comingSoon ? "\(context.name) — coming soon" : context.name)
+        .help(helpText)
     }
 
-    @ViewBuilder private var soonTag: some View {
+    private var helpText: String {
+        if comingSoon { return "\(context.name) — coming soon" }
+        if snoozed { return "\(context.name) — snoozed" }
+        return context.name
+    }
+
+    @ViewBuilder private var cornerTag: some View {
         if comingSoon {
             Text("soon").font(.system(size: 8, weight: .bold)).foregroundStyle(Color(hex: "0b0d0f"))
                 .padding(.horizontal, 4).padding(.vertical, 1)
                 .background(Capsule().fill(Color(hex: "cfd2d6")))
                 .overlay(Capsule().stroke(SteadyPalette.canvas, lineWidth: 1.5))
+                .offset(x: 3, y: 2)
+        } else if snoozed {
+            Image(systemName: "moon.zzz.fill").font(.system(size: 8, weight: .bold)).foregroundStyle(Color(hex: "0b0d0f"))
+                .frame(width: 15, height: 15)
+                .background(Circle().fill(Color(hex: "cfd2d6")))
+                .overlay(Circle().stroke(SteadyPalette.canvas, lineWidth: 1.5))
                 .offset(x: 3, y: 2)
         }
     }
@@ -205,6 +300,8 @@ private struct Pane: View {
     let isFocused: Bool
     let onFocus: () -> Void
     let onChange: (PaneApp) -> Void
+    let onSnooze: () -> Void
+    let onResolve: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -231,7 +328,7 @@ private struct Pane: View {
             .onTapGesture { onFocus() }
             Rectangle().fill(SteadyPalette.line).frame(height: 1)
 
-            app.view()
+            app.view(onSnooze: onSnooze, onResolve: onResolve)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color.black.opacity(0.28))
