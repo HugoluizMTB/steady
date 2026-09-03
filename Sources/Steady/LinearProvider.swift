@@ -1,7 +1,5 @@
 import Foundation
 import AppKit
-import CryptoKit
-import Security
 
 struct LinearIssue: Identifiable, Sendable {
     let id: String
@@ -12,6 +10,13 @@ struct LinearIssue: Identifiable, Sendable {
     let statusType: String
     let priority: Int
     let updatedAt: Date?
+    let workspace: String
+}
+
+struct LinearConnection: Identifiable, Codable, Sendable {
+    let id: String
+    var label: String
+    var needsReauth: Bool = false
 }
 
 struct LinearError: Error { let message: String }
@@ -24,24 +29,34 @@ final class LinearProvider {
     private(set) var status: Status = .disconnected
     private(set) var issues: [LinearIssue] = []
     private(set) var newIDs: Set<String> = []
-    private let lastSeenKey = "linear.lastSeen"
+    private(set) var connections: [LinearConnection] = []
 
-    private let tokenAccount = "linear.oauthToken"
+    private let lastSeenKey = "linear.lastSeen"
+    private let connectionsKey = "linear.connections"
     private let clientIdAccount = "linear.dcrClientId"
     private var loopback: OAuthLoopback?
 
     private static let authorizeEndpoint = "https://mcp.linear.app/authorize"
     private static let tokenEndpoint = URL(string: "https://mcp.linear.app/token")!
     private static let registerEndpoint = URL(string: "https://mcp.linear.app/register")!
+    private static let mcpEndpoint = URL(string: "https://mcp.linear.app/mcp")!
 
-    var isConnected: Bool { Keychain.get(tokenAccount) != nil }
+    init() {
+        migrateLegacy()
+        connections = loadConnections()
+    }
+
+    var isConnected: Bool { !connections.isEmpty }
+
+    private func tokenAccount(_ id: String) -> String { "linear.oauthToken.\(id)" }
+    private func refreshAccount(_ id: String) -> String { "linear.refreshToken.\(id)" }
 
     func signIn() {
         status = .authorizing
         Task {
             do {
                 let clientId = try await ensureClientId()
-                beginAuthorization(clientId: clientId)
+                beginAuthorization(clientId: clientId, reconnecting: nil)
             } catch let error as LinearError {
                 status = .failed(error.message)
             } catch {
@@ -50,34 +65,90 @@ final class LinearProvider {
         }
     }
 
-    func disconnect() {
-        loopback?.stop()
-        Keychain.delete(tokenAccount)
-        issues = []
-        status = .disconnected
+    func reconnect(_ id: String) {
+        status = .authorizing
+        Task {
+            do {
+                let clientId = try await ensureClientId()
+                beginAuthorization(clientId: clientId, reconnecting: id)
+            } catch let error as LinearError {
+                status = .failed(error.message)
+            } catch {
+                status = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func disconnect(_ id: String) {
+        Keychain.delete(tokenAccount(id))
+        Keychain.delete(refreshAccount(id))
+        connections.removeAll { $0.id == id }
+        saveConnections(connections)
+        if connections.isEmpty {
+            issues = []
+            status = .disconnected
+        } else {
+            load()
+        }
     }
 
     func load() {
-        guard let token = Keychain.get(tokenAccount) else { status = .disconnected; return }
+        guard !connections.isEmpty else { status = .disconnected; return }
         status = .loading
         Task {
-            do {
-                let fetched = try await Self.fetchAssigned(token: token)
-                if let previous = UserDefaults.standard.object(forKey: lastSeenKey) as? Double {
-                    let cutoff = Date(timeIntervalSince1970: previous)
-                    newIDs = Set(fetched.filter { ($0.updatedAt ?? .distantPast) > cutoff }.map(\.id))
-                } else {
-                    newIDs = []
+            var merged: [LinearIssue] = []
+            for index in connections.indices {
+                guard let fetched = await fetchWithRefresh(for: connections[index].id) else { continue }
+                connections[index].needsReauth = false
+                merged.append(contentsOf: fetched)
+                if let workspace = fetched.first?.workspace, !workspace.isEmpty {
+                    connections[index].label = workspace
                 }
-                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastSeenKey)
-                issues = fetched
-                status = .ready
-            } catch let error as LinearError {
-                status = .failed(error.message)
-            } catch {
-                status = .failed(error.localizedDescription)
             }
+            saveConnections(connections)
+
+            if let previous = UserDefaults.standard.object(forKey: lastSeenKey) as? Double {
+                let cutoff = Date(timeIntervalSince1970: previous)
+                newIDs = Set(merged.filter { ($0.updatedAt ?? .distantPast) > cutoff }.map(\.id))
+            } else {
+                newIDs = []
+            }
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastSeenKey)
+
+            issues = merged
+            status = .ready
         }
+    }
+
+    private func fetchWithRefresh(for id: String) async -> [LinearIssue]? {
+        guard let token = Keychain.get(tokenAccount(id)) else { return nil }
+        do {
+            return try await Self.fetchAssigned(token: token)
+        } catch let error as MCPError where error.isUnauthorized {
+            guard let refreshed = await refreshedToken(for: id) else {
+                markNeedsReauth(id)
+                return nil
+            }
+            let retried = try? await Self.fetchAssigned(token: refreshed)
+            if retried == nil { markNeedsReauth(id) }
+            return retried
+        } catch {
+            return nil
+        }
+    }
+
+    private func refreshedToken(for id: String) async -> String? {
+        guard let refreshToken = Keychain.get(refreshAccount(id)),
+              let clientId = Keychain.get(clientIdAccount),
+              let pair = try? await Self.refreshAccessToken(refreshToken: refreshToken, clientId: clientId) else { return nil }
+        Keychain.set(pair.access, for: tokenAccount(id))
+        if let refresh = pair.refresh { Keychain.set(refresh, for: refreshAccount(id)) }
+        return pair.access
+    }
+
+    private func markNeedsReauth(_ id: String) {
+        guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
+        connections[index].needsReauth = true
     }
 
     private func ensureClientId() async throws -> String {
@@ -87,10 +158,10 @@ final class LinearProvider {
         return clientId
     }
 
-    private func beginAuthorization(clientId: String) {
-        let verifier = Self.randomVerifier()
-        let challenge = Self.challenge(for: verifier)
-        let state = UUID().uuidString
+    private func beginAuthorization(clientId: String, reconnecting existingId: String?) {
+        let verifier = PKCE.verifier()
+        let challenge = PKCE.challenge(verifier)
+        let state = PKCE.state()
         let redirect = OAuthLoopback.redirectURI
 
         let loopback = OAuthLoopback()
@@ -103,8 +174,16 @@ final class LinearProvider {
                     return
                 }
                 do {
-                    let token = try await Self.exchangeToken(code: code, verifier: verifier, clientId: clientId, redirect: redirect)
-                    Keychain.set(token, for: self.tokenAccount)
+                    let pair = try await Self.exchangeToken(code: code, verifier: verifier, clientId: clientId, redirect: redirect)
+                    let id = existingId ?? UUID().uuidString
+                    Keychain.set(pair.access, for: self.tokenAccount(id))
+                    if let refresh = pair.refresh { Keychain.set(refresh, for: self.refreshAccount(id)) }
+                    if let index = self.connections.firstIndex(where: { $0.id == id }) {
+                        self.connections[index].needsReauth = false
+                    } else {
+                        self.connections.append(LinearConnection(id: id, label: "Workspace \(self.connections.count + 1)"))
+                    }
+                    self.saveConnections(self.connections)
                     self.load()
                 } catch let error as LinearError {
                     self.status = .failed(error.message)
@@ -123,6 +202,7 @@ final class LinearProvider {
             URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "prompt", value: "consent"),
         ]
         if let url = components.url { NSWorkspace.shared.open(url) }
     }
@@ -140,12 +220,9 @@ final class LinearProvider {
             "scope": "read",
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
         let (data, response) = try await URLSession.shared.data(for: request)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard code == 200 || code == 201 else {
-            throw LinearError(message: "Client registration failed (HTTP \(code))")
-        }
+        guard code == 200 || code == 201 else { throw LinearError(message: "Client registration failed (HTTP \(code))") }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let clientId = json["client_id"] as? String else {
             throw LinearError(message: "Registration returned no client_id")
@@ -153,7 +230,7 @@ final class LinearProvider {
         return clientId
     }
 
-    static func exchangeToken(code: String, verifier: String, clientId: String, redirect: String) async throws -> String {
+    static func exchangeToken(code: String, verifier: String, clientId: String, redirect: String) async throws -> OAuthTokenPair {
         var request = URLRequest(url: tokenEndpoint)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -166,90 +243,90 @@ final class LinearProvider {
             URLQueryItem(name: "code_verifier", value: verifier),
         ]
         request.httpBody = body.query?.data(using: .utf8)
-
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw LinearError(message: "Token exchange failed")
-        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw LinearError(message: "Token exchange failed") }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let token = json["access_token"] as? String else {
             throw LinearError(message: "No access token in response")
         }
-        return token
+        return OAuthTokenPair(access: token, refresh: json["refresh_token"] as? String)
     }
 
-    private static func randomVerifier() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return base64URL(Data(bytes))
+    static func refreshAccessToken(refreshToken: String, clientId: String) async throws -> OAuthTokenPair {
+        var request = URLRequest(url: tokenEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        var body = URLComponents()
+        body.queryItems = [
+            URLQueryItem(name: "grant_type", value: "refresh_token"),
+            URLQueryItem(name: "refresh_token", value: refreshToken),
+            URLQueryItem(name: "client_id", value: clientId),
+        ]
+        request.httpBody = body.query?.data(using: .utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw LinearError(message: "Token refresh failed") }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = json["access_token"] as? String else {
+            throw LinearError(message: "No access token in refresh response")
+        }
+        return OAuthTokenPair(access: token, refresh: json["refresh_token"] as? String ?? refreshToken)
     }
-
-    private static func challenge(for verifier: String) -> String {
-        base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
-    }
-
-    private static func base64URL(_ data: Data) -> String {
-        data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-
-    private static let mcpEndpoint = URL(string: "https://mcp.linear.app/mcp")!
 
     static func fetchAssigned(token: String) async throws -> [LinearIssue] {
-        var request = URLRequest(url: mcpEndpoint)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
-        let payload: [String: Any] = [
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": ["name": "list_issues", "arguments": ["assignee": "me", "limit": 50]],
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let assigned = try await fetchIssues(token: token, arguments: ["assignee": "me", "limit": 50])
+        if !assigned.isEmpty { return assigned }
+        return (try? await fetchIssues(token: token, arguments: ["limit": 50])) ?? []
+    }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw LinearError(message: "No response") }
-        guard http.statusCode == 200 else {
-            throw LinearError(message: http.statusCode == 401 ? "Session expired — sign in again" : "Linear MCP returned HTTP \(http.statusCode)")
-        }
-
-        let body = String(decoding: data, as: UTF8.self)
-        let dataPayload = body.split(separator: "\n")
-            .filter { $0.hasPrefix("data:") }
-            .map { $0.dropFirst(5).trimmingCharacters(in: .whitespaces) }
-            .joined()
-        guard let outer = try? JSONSerialization.jsonObject(with: Data(dataPayload.utf8)) as? [String: Any] else {
-            throw LinearError(message: "Unexpected MCP response")
-        }
-        if let error = outer["error"] as? [String: Any], let message = error["message"] as? String {
-            throw LinearError(message: message)
-        }
-        guard let result = outer["result"] as? [String: Any],
-              let content = result["content"] as? [[String: Any]],
-              let text = content.first?["text"] as? String,
+    static func fetchIssues(token: String, arguments: [String: Any]) async throws -> [LinearIssue] {
+        let result = try await MCP.call(endpoint: mcpEndpoint, token: token, method: "tools/call",
+                                        params: ["name": "list_issues", "arguments": arguments])
+        guard let text = MCP.toolText(result),
               let inner = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-              let issues = inner["issues"] as? [[String: Any]] else {
+              let rawIssues = inner["issues"] as? [[String: Any]] else {
             throw LinearError(message: "No issues in response")
         }
-
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return issues.compactMap { issue -> LinearIssue? in
+        return rawIssues.compactMap { issue -> LinearIssue? in
             guard let identifier = issue["id"] as? String else { return nil }
             var priority = 0
             if let object = issue["priority"] as? [String: Any] { priority = object["value"] as? Int ?? 0 }
             else if let value = issue["priority"] as? Int { priority = value }
+            let url = issue["url"] as? String ?? ""
             return LinearIssue(
                 id: identifier, identifier: identifier,
                 title: issue["title"] as? String ?? "",
-                url: issue["url"] as? String ?? "",
+                url: url,
                 statusName: issue["status"] as? String ?? "",
                 statusType: issue["statusType"] as? String ?? "",
                 priority: priority,
-                updatedAt: (issue["updatedAt"] as? String).flatMap { iso.date(from: $0) })
+                updatedAt: (issue["updatedAt"] as? String).flatMap { iso.date(from: $0) },
+                workspace: workspaceSlug(from: url))
         }
         .filter { $0.statusType != "completed" && $0.statusType != "canceled" }
+    }
+
+    private static func workspaceSlug(from url: String) -> String {
+        (URLComponents(string: url)?.path ?? "").split(separator: "/").first.map(String.init) ?? ""
+    }
+
+    private func migrateLegacy() {
+        guard loadConnections().isEmpty, let legacy = Keychain.get("linear.oauthToken") else { return }
+        let id = UUID().uuidString
+        Keychain.set(legacy, for: tokenAccount(id))
+        Keychain.delete("linear.oauthToken")
+        saveConnections([LinearConnection(id: id, label: "Workspace 1")])
+    }
+
+    private func loadConnections() -> [LinearConnection] {
+        guard let data = UserDefaults.standard.data(forKey: connectionsKey),
+              let decoded = try? JSONDecoder().decode([LinearConnection].self, from: data) else { return [] }
+        return decoded
+    }
+
+    private func saveConnections(_ list: [LinearConnection]) {
+        guard let data = try? JSONEncoder().encode(list) else { return }
+        UserDefaults.standard.set(data, forKey: connectionsKey)
     }
 }

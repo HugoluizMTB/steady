@@ -17,5 +17,6 @@ final class SteadyStores {
     let calendar = CalendarStore()
     let triage = TriageCenter()
     let settings = SettingsStore()
+    let links = LinkStore()
     private init() {}
 }

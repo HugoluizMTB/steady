@@ -1,5 +1,21 @@
 import Foundation
 
+enum MailAutomation {
+    private static let grantedKey = "mail.everGranted"
+
+    static var everGranted: Bool {
+        UserDefaults.standard.bool(forKey: grantedKey)
+    }
+
+    static func recordResult(_ result: MailBridge.RunResult) {
+        if result.ok, !result.authDenied {
+            UserDefaults.standard.set(true, forKey: grantedKey)
+        } else if result.authDenied {
+            UserDefaults.standard.set(false, forKey: grantedKey)
+        }
+    }
+}
+
 struct MailMessage: Identifiable, Sendable, Hashable {
     let id: Int
     let senderName: String

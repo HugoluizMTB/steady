@@ -32,8 +32,10 @@ struct SessionTerminal: NSViewRepresentable {
             agent = "CODEX_HOME=\(quote(session.profile.root)) codex resume \(quote(session.id))"
         }
 
-        let inner = "cd \(quote(cwd)); \(agent)"
-        return "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s \(name) \(quote(inner)); else \(inner); fi"
+        let extraPath = "/opt/homebrew/bin:/usr/local/bin:\(NSHomeDirectory())/.local/bin"
+        let onFailure = "ec=$?; if [ $ec -ne 0 ]; then echo; echo \"[steady] exited with code $ec\"; echo \"[steady] press any key to close\"; read -n 1 -s; fi"
+        let inner = "export PATH=\(quote(extraPath)):\"$PATH\"; cd \(quote(cwd)); \(agent); \(onFailure)"
+        return "if command -v tmux >/dev/null 2>&1; then tmux new-session -A -s \(name) \(quote(inner)); else \(inner); fi"
     }
 
     private func quote(_ text: String) -> String {

@@ -106,6 +106,8 @@ struct IslandContent: View {
             ColorPickerPanel()
         case .clipboard:
             ClipboardPanel(manager: SteadyStores.shared.clipboard)
+        case .saved:
+            SavedIslandPanel()
         case .snap:
             CodeSnapLauncher().frame(height: 240)
         case nil:
@@ -205,7 +207,7 @@ struct ToolCard: View {
 }
 
 enum IslandTool: String, CaseIterable, Identifiable {
-    case pr, usage, ports, colors, clipboard, snap
+    case pr, usage, ports, colors, clipboard, saved, snap
     var id: String { rawValue }
 
     var symbol: String {
@@ -215,6 +217,7 @@ enum IslandTool: String, CaseIterable, Identifiable {
         case .ports: return "network"
         case .colors: return "eyedropper"
         case .clipboard: return "doc.on.clipboard"
+        case .saved: return "bookmark.fill"
         case .snap: return "curlybraces"
         }
     }
@@ -226,6 +229,7 @@ enum IslandTool: String, CaseIterable, Identifiable {
         case .ports: return "Ports"
         case .colors: return "Colors"
         case .clipboard: return "Clipboard"
+        case .saved: return "Saved"
         case .snap: return "Code Snap"
         }
     }
@@ -237,6 +241,7 @@ enum IslandTool: String, CaseIterable, Identifiable {
         case .ports: return "Listening ports"
         case .colors: return "Pick screen colors"
         case .clipboard: return "Clipboard history"
+        case .saved: return "Save a link"
         case .snap: return "Code screenshots"
         }
     }

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 @MainActor
 @Observable
@@ -23,6 +24,10 @@ final class MailStore {
 
     init() {
         mutedSenders = Set(UserDefaults.standard.stringArray(forKey: Self.mutedKey) ?? [])
+        if MailAutomation.everGranted {
+            access = .granted
+            connect()
+        }
     }
 
     var visibleMessages: [MailMessage] {
@@ -48,6 +53,7 @@ final class MailStore {
         loading = true
         Task {
             let result = await Task.detached { MailBridge.accounts() }.value
+            MailAutomation.recordResult(result)
             if result.authDenied {
                 access = .denied
                 loading = false
@@ -67,6 +73,7 @@ final class MailStore {
         loading = true
         Task {
             let result = await Task.detached { MailBridge.recent(limit: 60) }.value
+            MailAutomation.recordResult(result)
             if result.authDenied {
                 access = .denied
                 loading = false
