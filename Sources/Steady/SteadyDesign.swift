@@ -39,7 +39,7 @@ struct SteadyContext: Identifiable {
 }
 
 enum SteadyData {
-    static let workspaces = ["Acme — Product", "Globex — Engineering", "Personal — Focus"]
+    static let workspaces = ["Acme / Product", "Globex / Engineering", "Personal / Focus"]
 
     static let contexts: [SteadyContext] = [
         SteadyContext(id: "claude", name: "Claude", headline: "Continue research synthesis", detail: "2 active sessions", status: "Ready", remaining: 2, symbol: "sparkles", iconColor: .white, iconBackground: Color(hex: "d87656")),

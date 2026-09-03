@@ -71,7 +71,7 @@ struct SlackPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Connect Slack").font(.system(size: 20, weight: .semibold)).foregroundStyle(SteadyPalette.ink)
-                Text("Slack’s MCP needs a registered app (no zero-setup — Slack requires a client secret). One-time: create a Slack app, add the redirect URI, add User Token Scopes, and paste its Client ID + Secret.")
+                Text("Slack’s MCP needs a registered app (no zero-setup: Slack requires a client secret). One-time: create a Slack app, add the redirect URI, add User Token Scopes, and paste its Client ID + Secret.")
                     .font(.system(size: 13)).foregroundStyle(SteadyPalette.muted).fixedSize(horizontal: false, vertical: true)
 
                 redirectRow

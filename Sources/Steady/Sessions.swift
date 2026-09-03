@@ -43,7 +43,7 @@ struct AgentSession: Identifiable, Sendable {
     let prURL: String?
     let worktree: Bool
 
-    var project: String { cwd.isEmpty ? "—" : URL(fileURLWithPath: cwd).lastPathComponent }
+    var project: String { cwd.isEmpty ? "-" : URL(fileURLWithPath: cwd).lastPathComponent }
     var persistentKey: String { "\(kind.rawValue)|\(profile.root)|\(id)" }
     var visibleRepository: String { prRepo ?? repository }
 
@@ -408,9 +408,12 @@ enum SessionScanner {
     }
 
     private static func codexMeta(_ url: URL) -> (cwd: String, subagent: Bool, sessionId: String) {
-        for line in head(url, bytes: 8192).split(separator: "\n") {
-            guard let object = object(line), object["type"] as? String == "session_meta",
-                  let payload = object["payload"] as? [String: Any] else { continue }
+        // session_meta is always the file's first line, but can run well past a
+        // few KB (embedded git diffs, base instructions, ...) - a byte-capped
+        // head() truncates it mid-object, so this reads the whole line instead.
+        let line = firstLine(url)
+        if let object = object(Substring(line)), object["type"] as? String == "session_meta",
+           let payload = object["payload"] as? [String: Any] {
             let cwd = payload["cwd"] as? String ?? ""
             let subagent = (payload["source"] as? [String: Any])?["subagent"] != nil
             let sessionId = (payload["session_id"] as? String) ?? (payload["id"] as? String) ?? ""
@@ -577,6 +580,19 @@ enum SessionScanner {
         defer { try? handle.close() }
         let data = (try? handle.read(upToCount: bytes)) ?? Data()
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func firstLine(_ url: URL, chunk: Int = 65_536, maxBytes: Int = 4_194_304) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        var data = Data()
+        while data.count < maxBytes {
+            guard let piece = try? handle.read(upToCount: chunk), !piece.isEmpty else { break }
+            data.append(piece)
+            if data.firstIndex(of: 0x0A) != nil { break }
+        }
+        let line = data.firstIndex(of: 0x0A).map { data[..<$0] } ?? data[...]
+        return String(decoding: line, as: UTF8.self)
     }
 
     private static func tail(_ url: URL, bytes: UInt64 = 131_072) -> String {

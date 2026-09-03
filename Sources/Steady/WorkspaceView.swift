@@ -260,8 +260,8 @@ private struct TopBarIcon: View {
     }
 
     private var helpText: String {
-        if comingSoon { return "\(context.name) — coming soon" }
-        if snoozed { return "\(context.name) — snoozed" }
+        if comingSoon { return "\(context.name), coming soon" }
+        if snoozed { return "\(context.name), snoozed" }
         return context.name
     }
 
