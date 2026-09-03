@@ -72,6 +72,17 @@ Notion and Linear authorise in the browser with PKCE and register themselves
 dynamically, so there is no app to create and no secret to paste. Steady stores
 every token in the macOS Keychain, never in the repository.
 
+## Install
+
+```bash
+brew install --cask hugoluizmtb/steady/steady
+```
+
+Steady is ad-hoc signed (no Apple Developer ID yet). If macOS blocks the first
+launch, right-click `Steady.app` in `/Applications` and choose **Open** once —
+this is a one-time step for any app outside the App Store without a paid
+Developer ID.
+
 ## Run locally
 
 ```bash
