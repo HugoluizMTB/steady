@@ -100,7 +100,7 @@ private struct SlackMockPanel: View {
                     message("Olivia De Lira Araujo", "10:32 AM", "The onboarding flow is ready for review. Can you check the handoff and empty state before we send it to engineering?")
                     message("Jackson Pires", "10:37 AM", "I left two notes on the workspace switcher. Everything else looks ready.")
                     unreadDivider
-                    message("Olivia De Lira Araujo", "10:41 AM", "Perfect — can you confirm which direction we should ship?")
+                    message("Olivia De Lira Araujo", "10:41 AM", "Perfect, can you confirm which direction we should ship?")
                     if !sent.isEmpty {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("You").font(.system(size: 11)).foregroundStyle(SteadyPalette.mint)

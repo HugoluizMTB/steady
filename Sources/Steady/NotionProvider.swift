@@ -92,7 +92,7 @@ final class NotionProvider {
         guard let refreshToken = Keychain.get(refreshTokenAccount),
               let clientId = Keychain.get(clientIdAccount),
               let pair = try? await Self.refreshAccessToken(refreshToken: refreshToken, clientId: clientId) else {
-            status = .failed("Session expired — sign in again")
+            status = .failed("Session expired. Sign in again")
             return
         }
         Keychain.set(pair.access, for: tokenAccount)
@@ -101,7 +101,7 @@ final class NotionProvider {
             results = try await runSearch(text, token: pair.access)
             status = .ready
         } catch {
-            status = .failed("Session expired — sign in again")
+            status = .failed("Session expired. Sign in again")
         }
     }
 

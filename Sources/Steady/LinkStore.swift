@@ -120,7 +120,7 @@ final class LinkStore {
 
     private static func decodeEntities(_ text: String) -> String {
         var result = text
-        let map = ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&apos;": "'", "&nbsp;": " ", "&mdash;": "—", "&ndash;": "–"]
+        let map = ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&apos;": "'", "&nbsp;": " ", "&mdash;": "-", "&ndash;": "-"]
         for (entity, value) in map { result = result.replacingOccurrences(of: entity, with: value) }
         return result
     }

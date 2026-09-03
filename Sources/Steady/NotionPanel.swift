@@ -91,7 +91,7 @@ struct NotionPanel: View {
         VStack(spacing: 16) {
             BrandIcon(context: context, size: 60)
             Text("Sign in with Notion").font(.system(size: 21, weight: .semibold)).foregroundStyle(SteadyPalette.ink)
-            Text("One click. Steady registers itself with Notion's MCP and authorizes with PKCE — no app to create, no keys.")
+            Text("One click. Steady registers itself with Notion's MCP and authorizes with PKCE. No app to create, no keys.")
                 .font(.system(size: 13)).foregroundStyle(SteadyPalette.muted)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).frame(maxWidth: 360)
             Button { provider.signIn() } label: {

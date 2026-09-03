@@ -86,7 +86,7 @@ struct LinearPanel: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help(connection.needsReauth ? "Session expired — click to reconnect" : connection.label)
+                    .help(connection.needsReauth ? "Session expired, click to reconnect" : connection.label)
                     Button { provider.disconnect(connection.id) } label: {
                         Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
                             .foregroundStyle(active ? Color(hex: "102019").opacity(0.7) : SteadyPalette.muted)
@@ -113,7 +113,7 @@ struct LinearPanel: View {
         VStack(spacing: 16) {
             BrandIcon(context: context, size: 60)
             Text("Sign in with Linear").font(.system(size: 21, weight: .semibold)).foregroundStyle(SteadyPalette.ink)
-            Text("One click — Steady registers itself with Linear and authorizes with PKCE. Have two workspaces? Connect one, then hit “Add account” for the other.")
+            Text("One click: Steady registers itself with Linear and authorizes with PKCE. Have two workspaces? Connect one, then hit “Add account” for the other.")
                 .font(.system(size: 13)).foregroundStyle(SteadyPalette.muted)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).frame(maxWidth: 360)
             Button { provider.signIn() } label: {

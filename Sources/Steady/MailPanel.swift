@@ -156,7 +156,7 @@ private struct MailConnectView: View {
         VStack(spacing: 12) {
             Image(systemName: "envelope").font(.system(size: 30)).foregroundStyle(SteadyPalette.muted)
             Text("Connect Mail").font(.system(size: 15, weight: .semibold)).foregroundStyle(SteadyPalette.ink)
-            Text("Steady reads the inbox from the Mail app already set up on this Mac. No new login — macOS will ask to allow automation once.")
+            Text("Steady reads the inbox from the Mail app already set up on this Mac. No new login. macOS will ask to allow automation once.")
                 .font(.system(size: 12)).foregroundStyle(SteadyPalette.muted).multilineTextAlignment(.center).frame(maxWidth: 340)
             Button(action: onConnect) {
                 Label("Connect", systemImage: "link").font(.system(size: 13, weight: .semibold))
