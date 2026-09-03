@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum PaneApp: String, CaseIterable, Identifiable {
-    case claude, slack, codex, github, linear, notion, figma, gmail, calendar
+    case claude, slack, codex, github, linear, notion, figma, gmail, calendar, links
     var id: String { rawValue }
     var context: SteadyContext { SteadyData.context(rawValue) ?? SteadyData.contexts[0] }
     var comingSoon: Bool { self == .slack || self == .figma }
@@ -17,6 +17,7 @@ enum PaneApp: String, CaseIterable, Identifiable {
         case .calendar: CalendarPanel(onSnooze: onSnooze, onResolve: onResolve)
         case .gmail: MailPanel(onSnooze: onSnooze, onResolve: onResolve)
         case .github: GitHubPanel(onSnooze: onSnooze, onResolve: onResolve)
+        case .links: LinksPanel(onSnooze: onSnooze, onResolve: onResolve)
         }
     }
 }
@@ -182,6 +183,7 @@ struct WorkspaceView: View {
         case .codex: return ToolActivity(badge: sessions.codex.filter { $0.state == .running }.count)
         case .gmail: return ToolActivity(badge: SteadyStores.shared.mail.unreadCount)
         case .github: return ToolActivity(badge: SteadyStores.shared.github.unreadCount)
+        case .links: return ToolActivity(badge: SteadyStores.shared.links.dueCount)
         default: return .none
         }
     }

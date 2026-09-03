@@ -15,7 +15,7 @@ BIN="$(swift build -c "$CONFIG" --package-path "$ROOT" --show-bin-path)/$APP_NAM
 
 echo "→ assembling $APP"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -41,17 +41,30 @@ PLIST
 # Sign with a local Apple identity so the Keychain (Touch ID) stays stable across
 # rebuilds. Set STEADY_SIGN_IDENTITY to force a specific one; otherwise the first
 # local Apple Development / Developer ID identity is used, falling back to ad-hoc.
+# No --deep: Steady has no nested frameworks/plugins to recurse into, and --deep
+# combined with the toolchain's own linker-signed executable produces a broken
+# seal ("code has no resources but signature indicates they must be present").
+# grep exits 1 when no identity matches (the expected case on CI or a machine
+# with no personal certificate) - `|| true` keeps that from aborting the whole
+# script under `set -e`/pipefail before it ever reaches the ad-hoc fallback.
 if [ -n "${STEADY_SIGN_IDENTITY:-}" ]; then
-  IDENTITY_HASH="$(security find-identity -v -p codesigning 2>/dev/null | grep "$STEADY_SIGN_IDENTITY" | head -1 | awk '{print $2}')"
+  IDENTITY_HASH="$(security find-identity -v -p codesigning 2>/dev/null | grep "$STEADY_SIGN_IDENTITY" || true)"
 else
-  IDENTITY_HASH="$(security find-identity -v -p codesigning 2>/dev/null | grep -E 'Apple Development|Developer ID Application' | head -1 | awk '{print $2}')"
+  IDENTITY_HASH="$(security find-identity -v -p codesigning 2>/dev/null | grep -E 'Apple Development|Developer ID Application' || true)"
 fi
+IDENTITY_HASH="$(echo "$IDENTITY_HASH" | head -1 | awk '{print $2}')"
 if [ -n "$IDENTITY_HASH" ]; then
   echo "→ signing with $IDENTITY_HASH"
-  codesign --force --deep --timestamp=none --sign "$IDENTITY_HASH" "$APP"
+  codesign --force --timestamp=none --sign "$IDENTITY_HASH" "$APP"
 else
   echo "→ no developer identity found, ad-hoc signing"
-  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+  codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+fi
+
+if ! codesign --verify --deep --strict "$APP" >/dev/null 2>&1; then
+  echo "✗ signature check failed:" >&2
+  codesign --verify --deep --strict -vvv "$APP" >&2 || true
+  exit 1
 fi
 
 echo "✓ built $APP"

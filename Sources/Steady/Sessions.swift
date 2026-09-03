@@ -274,7 +274,7 @@ enum SessionScanner {
     }
 
     static func openSessions(claudeProfiles: [AgentProfile], codexProfiles: [AgentProfile]) -> ([AgentSession], [AgentSession]) {
-        let agents = runningAgents().filter { !$0.cwd.isEmpty && $0.cwd != "/" }
+        let agents = runningAgents().filter { $0.cwd != "/" && (!$0.cwd.isEmpty || $0.uuid != nil) }
         var repositories: [String: RepositoryContext] = [:]
         var claude: [String: AgentSession] = [:]
         var codex: [String: AgentSession] = [:]
@@ -385,15 +385,23 @@ enum SessionScanner {
 
         var files: [(url: URL, date: Date)] = []
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            if let uuid, !url.lastPathComponent.contains(uuid) { continue }
             let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             files.append((url, date))
         }
+        let sorted = files.sorted { $0.date > $1.date }
 
-        for entry in files.sorted(by: { $0.date > $1.date }).prefix(uuid == nil ? 150 : 6) {
+        if let uuid {
+            for entry in sorted.prefix(500) {
+                let meta = codexMeta(entry.url)
+                if meta.subagent { continue }
+                if meta.sessionId == uuid || entry.url.lastPathComponent.contains(uuid) { return entry.url }
+            }
+        }
+
+        guard !cwd.isEmpty else { return nil }
+        for entry in sorted.prefix(300) {
             let meta = codexMeta(entry.url)
             if meta.subagent { continue }
-            if uuid != nil { return entry.url }
             if meta.cwd == cwd { return entry.url }
         }
         return nil
@@ -411,45 +419,98 @@ enum SessionScanner {
         return ("", false, "")
     }
 
-    private static func parseCodex(_ url: URL, date: Date, cwd: String, pid: Int32, profile: AgentProfile, repository: RepositoryContext) -> AgentSession {
-        let meta = codexMeta(url)
-
-        var title = ""
-        for line in head(url).split(separator: "\n").prefix(400) {
-            guard let object = object(line), object["type"] as? String == "event_msg",
-                  let payload = object["payload"] as? [String: Any], payload["type"] as? String == "user_message",
-                  let message = payload["message"] as? String, !message.isEmpty else { continue }
-            title = message
-            break
-        }
-
-        var contextTokens = 0
+    private struct CodexProgress {
         var lastEvent = ""
+        var contextTokens = 0
         var lastAgentMessage = ""
+        var lastCommand = ""
+    }
+
+    private static func codexTail(_ url: URL) -> CodexProgress {
+        var progress = CodexProgress()
         for line in tail(url).split(separator: "\n") {
             guard let object = object(line), object["type"] as? String == "event_msg",
                   let payload = object["payload"] as? [String: Any] else { continue }
             let event = payload["type"] as? String ?? ""
-            lastEvent = event
+            progress.lastEvent = event
             switch event {
             case "token_count":
                 if let info = payload["info"] as? [String: Any],
                    let last = info["last_token_usage"] as? [String: Any],
-                   let total = last["total_tokens"] as? Int { contextTokens = total }
+                   let total = last["total_tokens"] as? Int { progress.contextTokens = total }
             case "agent_message":
-                if let message = payload["message"] as? String { lastAgentMessage = message }
+                if let message = payload["message"] as? String, !message.isEmpty { progress.lastAgentMessage = message }
+            case "task_complete":
+                if let message = payload["last_agent_message"] as? String, !message.isEmpty { progress.lastAgentMessage = message }
+            case "item_completed":
+                applyCodexItem(payload["item"] as? [String: Any], to: &progress)
             default:
                 break
             }
         }
+        return progress
+    }
 
+    private static func applyCodexItem(_ item: [String: Any]?, to progress: inout CodexProgress) {
+        guard let item, let kind = item["type"] as? String else { return }
+        switch kind {
+        case "AgentMessage":
+            if let message = codexText(item["content"]), !message.isEmpty { progress.lastAgentMessage = message }
+        case "CommandExecution":
+            progress.lastCommand = codexCommandLabel(item)
+        default:
+            break
+        }
+    }
+
+    private static func codexCommandLabel(_ item: [String: Any]) -> String {
+        if let parsed = (item["parsed_cmd"] as? [[String: Any]])?.first, let cmd = parsed["cmd"] as? String, !cmd.isEmpty {
+            return String(cmd.prefix(60))
+        }
+        if let command = item["command"] as? [String], !command.isEmpty {
+            return String(command.joined(separator: " ").prefix(60))
+        }
+        return ""
+    }
+
+    private static func codexText(_ content: Any?) -> String? {
+        guard let blocks = content as? [[String: Any]] else { return nil }
+        for block in blocks {
+            let type = block["type"] as? String
+            guard type == "input_text" || type == "output_text" || type == "text" || type == "Text" else { continue }
+            if let text = block["text"] as? String, !text.isEmpty { return text }
+        }
+        return nil
+    }
+
+    private static func parseCodex(_ url: URL, date: Date, cwd: String, pid: Int32, profile: AgentProfile, repository: RepositoryContext) -> AgentSession {
+        let meta = codexMeta(url)
+
+        var title = ""
+        for line in head(url).split(separator: "\n").prefix(600) {
+            guard let object = object(line), let payload = object["payload"] as? [String: Any] else { continue }
+            let type = object["type"] as? String
+            if type == "event_msg", payload["type"] as? String == "user_message",
+               let message = payload["message"] as? String, !message.isEmpty {
+                title = message
+                break
+            }
+            if type == "response_item", payload["type"] as? String == "message", payload["role"] as? String == "user",
+               let message = codexText(payload["content"]), !message.isEmpty, !message.hasPrefix("<") {
+                title = message
+                break
+            }
+        }
+
+        let progress = codexTail(url)
+        let terminalEvents: Set<String> = ["task_complete", "turn_aborted"]
         let seconds = Date().timeIntervalSince(date)
-        let state: AgentSession.State = (lastEvent != "task_complete" && seconds < 30) ? .running : .done
+        let state: AgentSession.State = (!terminalEvents.contains(progress.lastEvent) && seconds < 30) ? .running : .done
 
         let activity: String
         switch state {
-        case .running: activity = "Codex rodando…"
-        case .done: activity = lastAgentMessage.isEmpty ? "Esperando você" : lastAgentMessage
+        case .running: activity = progress.lastCommand.isEmpty ? "Codex rodando…" : "Usando \(progress.lastCommand)…"
+        case .done: activity = progress.lastAgentMessage.isEmpty ? "Esperando você" : progress.lastAgentMessage
         }
 
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -459,7 +520,7 @@ enum SessionScanner {
             repository: repository.repository, branch: repository.branch,
             title: cleanTitle.isEmpty ? "Codex session" : String(cleanTitle.prefix(100)), filePath: url.path,
             modified: date, state: state, activity: String(activity.prefix(280)), model: "codex",
-            contextTokens: contextTokens, prNumber: nil, prRepo: nil, prURL: nil, worktree: repository.worktree
+            contextTokens: progress.contextTokens, prNumber: nil, prRepo: nil, prURL: nil, worktree: repository.worktree
         )
     }
 

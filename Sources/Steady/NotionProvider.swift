@@ -21,6 +21,7 @@ final class NotionProvider {
     private(set) var query = ""
 
     private let tokenAccount = "notion.oauthToken"
+    private let refreshTokenAccount = "notion.refreshToken"
     private let clientIdAccount = "notion.dcrClientId"
     private var loopback: OAuthLoopback?
 
@@ -48,6 +49,7 @@ final class NotionProvider {
     func disconnect() {
         loopback?.stop()
         Keychain.delete(tokenAccount)
+        Keychain.delete(refreshTokenAccount)
         results = []
         rawText = ""
         status = .disconnected
@@ -64,19 +66,42 @@ final class NotionProvider {
         status = .loading
         Task {
             do {
-                let result = try await MCP.call(
-                    endpoint: Self.mcpEndpoint, token: token, method: "tools/call",
-                    params: ["name": "notion-search", "arguments": ["query": text]]
-                )
-                let raw = MCP.toolText(result) ?? ""
-                rawText = raw
-                results = Self.parse(raw)
+                results = try await runSearch(text, token: token)
                 status = .ready
+            } catch let error as MCPError where error.isUnauthorized {
+                await retryAfterRefresh(text)
             } catch let error as MCPError {
                 status = .failed(error.message)
             } catch {
                 status = .failed(error.localizedDescription)
             }
+        }
+    }
+
+    private func runSearch(_ text: String, token: String) async throws -> [NotionResult] {
+        let result = try await MCP.call(
+            endpoint: Self.mcpEndpoint, token: token, method: "tools/call",
+            params: ["name": "notion-search", "arguments": ["query": text]]
+        )
+        let raw = MCP.toolText(result) ?? ""
+        rawText = raw
+        return Self.parse(raw)
+    }
+
+    private func retryAfterRefresh(_ text: String) async {
+        guard let refreshToken = Keychain.get(refreshTokenAccount),
+              let clientId = Keychain.get(clientIdAccount),
+              let pair = try? await Self.refreshAccessToken(refreshToken: refreshToken, clientId: clientId) else {
+            status = .failed("Session expired — sign in again")
+            return
+        }
+        Keychain.set(pair.access, for: tokenAccount)
+        if let refresh = pair.refresh { Keychain.set(refresh, for: refreshTokenAccount) }
+        do {
+            results = try await runSearch(text, token: pair.access)
+            status = .ready
+        } catch {
+            status = .failed("Session expired — sign in again")
         }
     }
 
@@ -103,8 +128,9 @@ final class NotionProvider {
                     return
                 }
                 do {
-                    let token = try await Self.exchangeToken(code: code, verifier: verifier, clientId: clientId, redirect: redirect)
-                    Keychain.set(token, for: self.tokenAccount)
+                    let pair = try await Self.exchangeToken(code: code, verifier: verifier, clientId: clientId, redirect: redirect)
+                    Keychain.set(pair.access, for: self.tokenAccount)
+                    if let refresh = pair.refresh { Keychain.set(refresh, for: self.refreshTokenAccount) }
                     self.load()
                 } catch let error as NotionError {
                     self.status = .failed(error.message)
@@ -150,7 +176,7 @@ final class NotionProvider {
         return clientId
     }
 
-    static func exchangeToken(code: String, verifier: String, clientId: String, redirect: String) async throws -> String {
+    static func exchangeToken(code: String, verifier: String, clientId: String, redirect: String) async throws -> OAuthTokenPair {
         var request = URLRequest(url: tokenEndpoint)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -169,7 +195,27 @@ final class NotionProvider {
               let token = json["access_token"] as? String else {
             throw NotionError(message: "No access token in response")
         }
-        return token
+        return OAuthTokenPair(access: token, refresh: json["refresh_token"] as? String)
+    }
+
+    static func refreshAccessToken(refreshToken: String, clientId: String) async throws -> OAuthTokenPair {
+        var request = URLRequest(url: tokenEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        var body = URLComponents()
+        body.queryItems = [
+            URLQueryItem(name: "grant_type", value: "refresh_token"),
+            URLQueryItem(name: "refresh_token", value: refreshToken),
+            URLQueryItem(name: "client_id", value: clientId),
+        ]
+        request.httpBody = body.query?.data(using: .utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NotionError(message: "Token refresh failed") }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = json["access_token"] as? String else {
+            throw NotionError(message: "No access token in refresh response")
+        }
+        return OAuthTokenPair(access: token, refresh: json["refresh_token"] as? String ?? refreshToken)
     }
 
     static func parse(_ text: String) -> [NotionResult] {

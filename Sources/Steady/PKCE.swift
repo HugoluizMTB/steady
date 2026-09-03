@@ -36,7 +36,7 @@ enum MCP {
         let (data, response) = try await URLSession.shared.data(for: request)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard code == 200 else {
-            throw MCPError(message: code == 401 ? "Session expired — sign in again" : "MCP returned HTTP \(code)")
+            throw MCPError(message: code == 401 ? "Session expired — sign in again" : "MCP returned HTTP \(code)", status: code)
         }
         let body = String(decoding: data, as: UTF8.self)
         let payload = body.split(separator: "\n")
@@ -57,4 +57,13 @@ enum MCP {
     }
 }
 
-struct MCPError: Error { let message: String }
+struct MCPError: Error {
+    let message: String
+    var status: Int? = nil
+    var isUnauthorized: Bool { status == 401 }
+}
+
+struct OAuthTokenPair: Sendable {
+    let access: String
+    let refresh: String?
+}
